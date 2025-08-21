@@ -31,6 +31,9 @@ class Config:
     STORAGE_TYPE = 'mysql'  # 'file', 'memory', or 'mysql'
     STORAGE_DIR = 'conversations'
     
+    # Force in-memory storage for testing (set FORCE_MEMORY_STORAGE=true)
+    FORCE_MEMORY_STORAGE = os.getenv('FORCE_MEMORY_STORAGE', 'false').lower() == 'true'
+    
     # MySQL Database Configuration (from environment)
     MYSQL_HOST = os.getenv('MYSQL_HOST')
     MYSQL_PORT = int(os.getenv('MYSQL_PORT', '3306'))
@@ -38,6 +41,22 @@ class Config:
     MYSQL_USER = os.getenv('MYSQL_USER')
     MYSQL_PASSWORD = os.getenv('MYSQL_PASSWORD')
     MYSQL_SSL_MODE = os.getenv('MYSQL_SSL_MODE', 'REQUIRED')
+    
+    # Auto-fallback to in-memory storage if MySQL is not available
+    @classmethod
+    def get_storage_type(cls):
+        """Get storage type with fallback logic"""
+        # Force in-memory storage if environment variable is set
+        if cls.FORCE_MEMORY_STORAGE:
+            print("🔧 Force memory storage enabled via environment variable")
+            return 'memory'
+        
+        if cls.STORAGE_TYPE == 'mysql':
+            # Check if MySQL environment variables are set
+            if not all([cls.MYSQL_HOST, cls.MYSQL_DATABASE, cls.MYSQL_USER, cls.MYSQL_PASSWORD]):
+                print("⚠️  MySQL environment variables not fully configured, falling back to in-memory storage")
+                return 'memory'
+        return cls.STORAGE_TYPE
     
     # Server Configuration (hardcoded)
     PORT = 5001

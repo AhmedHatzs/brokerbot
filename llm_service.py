@@ -25,7 +25,14 @@ class LLMService:
         if not Config.OPENAI_ASSISTANT_ID:
             raise ValueError("OPENAI_ASSISTANT_ID is required")
         
-        self.client = openai.OpenAI(api_key=Config.OPENAI_API_KEY)
+        try:
+            # Initialize OpenAI client with minimal configuration
+            self.client = openai.OpenAI(api_key=Config.OPENAI_API_KEY)
+            logger.info("OpenAI client initialized successfully")
+        except Exception as e:
+            logger.error(f"Failed to initialize OpenAI client: {e}")
+            raise ValueError(f"OpenAI client initialization failed: {e}")
+        
         self.assistant_id = Config.OPENAI_ASSISTANT_ID
         self.model = Config.OPENAI_MODEL
         self.max_tokens = Config.OPENAI_MAX_TOKENS

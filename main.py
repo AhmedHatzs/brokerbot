@@ -7,6 +7,7 @@ A trading assistant chatbot with conversation memory
 from chat_api import app
 from config import Config
 import os
+import sys
 
 if __name__ == "__main__":
     print("=" * 50)
@@ -21,14 +22,27 @@ if __name__ == "__main__":
         print(f"📋 API Base: http://0.0.0.0:{port}")
         print(f"🏥 Health Check: http://0.0.0.0:{port}/health")
         print("=" * 50)
-        import subprocess
-        subprocess.run([
-            "gunicorn", 
-            "--bind", f"0.0.0.0:{port}", 
-            "--workers", "1",
-            "--timeout", "120",
-            "chat_api:app"
-        ])
+        
+        try:
+            import subprocess
+            # Use more conservative Gunicorn settings for Railway
+            subprocess.run([
+                "gunicorn", 
+                "--bind", f"0.0.0.0:{port}", 
+                "--workers", "1",
+                "--timeout", "120",
+                "--keep-alive", "5",
+                "--max-requests", "1000",
+                "--max-requests-jitter", "100",
+                "--preload",
+                "chat_api:app"
+            ], check=True)
+        except subprocess.CalledProcessError as e:
+            print(f"❌ Gunicorn failed to start: {e}")
+            sys.exit(1)
+        except Exception as e:
+            print(f"❌ Unexpected error starting Gunicorn: {e}")
+            sys.exit(1)
     else:
         # Development: Use Flask development server
         print(f"🔧 Development mode: Using Flask development server")

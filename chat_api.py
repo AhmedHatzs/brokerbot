@@ -28,8 +28,12 @@ if config_errors:
 Config.print_config()
 
 # Initialize conversation memory system
+storage_type = Config.get_storage_type()
+print(f"🗄️  Selected storage type: {storage_type}")
+
 try:
-    if Config.STORAGE_TYPE == 'mysql':
+    if storage_type == 'mysql':
+        print(f"🗄️  Attempting to connect to MySQL: {Config.MYSQL_HOST}:{Config.MYSQL_PORT}")
         storage = MySQLStorage(
             host=Config.MYSQL_HOST,
             port=Config.MYSQL_PORT,
@@ -38,8 +42,8 @@ try:
             password=Config.MYSQL_PASSWORD,
             ssl_mode=Config.MYSQL_SSL_MODE
         )
-        print(f"🗄️  Using MySQL conversation storage: {Config.MYSQL_DATABASE}")
-    elif Config.STORAGE_TYPE == 'file':
+        print(f"✅ MySQL connection successful: {Config.MYSQL_DATABASE}")
+    elif storage_type == 'file':
         storage = FileStorage(Config.STORAGE_DIR)
         print(f"📁 Using file-based conversation storage: {Config.STORAGE_DIR}")
     else:
@@ -47,6 +51,10 @@ try:
         print("💾 Using in-memory conversation storage (data will not persist)")
 except Exception as e:
     print(f"⚠️  Storage initialization failed, falling back to in-memory: {e}")
+    print(f"   MySQL Host: {Config.MYSQL_HOST}")
+    print(f"   MySQL Port: {Config.MYSQL_PORT}")
+    print(f"   MySQL Database: {Config.MYSQL_DATABASE}")
+    print(f"   MySQL User: {Config.MYSQL_USER}")
     storage = InMemoryStorage()
     print("💾 Using in-memory conversation storage (data will not persist)")
 
@@ -75,22 +83,41 @@ except Exception as e:
 @app.route('/', methods=['GET'])
 def root():
     """Root endpoint - API information and status"""
+    try:
+        return jsonify({
+            'message': f'Welcome to {Config.BOT_NAME} API',
+            'version': '1.0.0',
+            'status': 'running',
+            'timestamp': datetime.now().isoformat(),
+            'environment': 'production' if os.getenv('PORT') else 'development',
+            'port': os.getenv('PORT', '5001'),
+            'endpoints': {
+                'create_session': 'POST /create_session',
+                'process_message': 'POST /process_message',
+                'session_info': 'GET /session/<session_id>',
+                'conversation_history': 'GET /session/<session_id>/history',
+                'delete_session': 'DELETE /session/<session_id>',
+                'list_sessions': 'GET /sessions',
+                'cleanup_sessions': 'POST /cleanup_sessions',
+                'health': 'GET /health',
+                'test': 'GET /test'
+            },
+            'documentation': 'See API_REFERENCE.md for detailed usage instructions'
+        }), 200
+    except Exception as e:
+        logger.error(f"Error in root endpoint: {e}")
+        return jsonify({
+            'error': 'Internal error in root endpoint',
+            'message': str(e)
+        }), 500
+
+@app.route('/test', methods=['GET'])
+def test():
+    """Simple test endpoint to verify the API is working"""
     return jsonify({
-        'message': f'Welcome to {Config.BOT_NAME} API',
-        'version': '1.0.0',
-        'status': 'running',
-        'timestamp': datetime.now().isoformat(),
-        'endpoints': {
-            'create_session': 'POST /create_session',
-            'process_message': 'POST /process_message',
-            'session_info': 'GET /session/<session_id>',
-            'conversation_history': 'GET /session/<session_id>/history',
-            'delete_session': 'DELETE /session/<session_id>',
-            'list_sessions': 'GET /sessions',
-            'cleanup_sessions': 'POST /cleanup_sessions',
-            'health': 'GET /health'
-        },
-        'documentation': 'See API_REFERENCE.md for detailed usage instructions'
+        'status': 'success',
+        'message': 'API is working correctly',
+        'timestamp': datetime.now().isoformat()
     }), 200
 
 @app.route('/process_message', methods=['POST'])
@@ -319,7 +346,15 @@ def cleanup_expired_sessions():
 def health():
     """Health check endpoint with memory system and LLM service status"""
     try:
-        total_sessions = len(conversation_memory.storage.list_sessions())
+        # Test storage connection
+        storage_status = "unknown"
+        total_sessions = 0
+        try:
+            total_sessions = len(conversation_memory.storage.list_sessions())
+            storage_status = "healthy"
+        except Exception as e:
+            storage_status = f"error: {str(e)}"
+            logger.error(f"Storage error in health check: {e}")
         
         # Check LLM service status
         llm_status = "unavailable"
@@ -333,12 +368,16 @@ def health():
                     llm_status = "connection_failed"
             except Exception as e:
                 llm_status = f"error: {str(e)}"
+                logger.error(f"LLM error in health check: {e}")
         
         return jsonify({
             'status': 'API is running',
             'timestamp': datetime.now().isoformat(),
+            'environment': 'production' if os.getenv('PORT') else 'development',
+            'port': os.getenv('PORT', '5001'),
             'conversation_memory': {
                 'storage_type': type(conversation_memory.storage).__name__,
+                'storage_status': storage_status,
                 'total_sessions': total_sessions,
                 'max_tokens_per_chunk': conversation_memory.max_tokens_per_chunk,
                 'max_context_tokens': conversation_memory.max_context_tokens
@@ -352,6 +391,7 @@ def health():
         logger.error(f"Error in health check: {e}")
         return jsonify({
             'status': 'API is running but some services may have issues',
+            'error': str(e),
             'timestamp': datetime.now().isoformat()
         }), 200
 
