@@ -26,5 +26,5 @@ EXPOSE 5001
 # Set environment variables for production
 ENV PYTHONUNBUFFERED=1
 
-# Run the application
-CMD ["python", "main.py"] 
+# Run the application with Gunicorn for production
+CMD ["gunicorn", "--bind", "0.0.0.0:5001", "chat_api:app"] 

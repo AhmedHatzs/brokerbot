@@ -6,6 +6,7 @@ A trading assistant chatbot with conversation memory
 
 from chat_api import app
 from config import Config
+import os
 
 if __name__ == "__main__":
     print("=" * 50)
@@ -17,8 +18,17 @@ if __name__ == "__main__":
     print("🛑 Press Ctrl+C to stop the server")
     print("=" * 50)
     
-    app.run(
-        host=Config.HOST,
-        port=Config.PORT,
-        debug=Config.DEBUG
-    ) 
+    # Check if running in production (Railway sets PORT environment variable)
+    if os.getenv('PORT'):
+        # Production: Use Railway's PORT
+        port = int(os.getenv('PORT'))
+        print(f"🚀 Production mode: Using Railway port {port}")
+        app.run(host="0.0.0.0", port=port, debug=False)
+    else:
+        # Development: Use Flask development server
+        print("🔧 Development mode: Using Flask development server")
+        app.run(
+            host=Config.HOST,
+            port=Config.PORT,
+            debug=Config.DEBUG
+        ) 

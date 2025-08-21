@@ -2,7 +2,7 @@
   dockerfile = "Dockerfile"
 
 [deploy]
-  startCommand = "python run_api.py"
+  startCommand = "gunicorn --bind 0.0.0.0:$PORT chat_api:app"
 
 [services.api]
   internalPort = 5001

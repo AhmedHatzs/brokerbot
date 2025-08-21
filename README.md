@@ -244,10 +244,17 @@ MYSQL_SSL_MODE=REQUIRED
 ## 🔧 Configuration
 
 Key settings in `config.py`:
-- **Port**: 5001 (default)
+- **Port**: 5001 (default) or Railway's PORT environment variable
 - **Max Tokens**: 1000 per response
 - **Memory**: 4000 tokens context limit
 - **Storage**: MySQL database
+
+## 🚀 Production Deployment
+
+The app uses different servers for different environments:
+- **Development**: Uses Flask development server on port 5001
+- **Railway Production**: Uses Gunicorn WSGI server (production-grade)
+- **Docker Production**: Uses Gunicorn WSGI server (production-grade)
 
 ## 🚀 Deployment
 
