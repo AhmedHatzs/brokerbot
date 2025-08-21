@@ -26,7 +26,8 @@ class LLMService:
             raise ValueError("OPENAI_ASSISTANT_ID is required")
         
         try:
-            # Initialize OpenAI client with minimal configuration
+            # Simple OpenAI client initialization
+            import openai
             self.client = openai.OpenAI(api_key=Config.OPENAI_API_KEY)
             logger.info("OpenAI client initialized successfully")
         except Exception as e:
