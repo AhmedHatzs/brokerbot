@@ -5,5 +5,5 @@
   startCommand = "python main.py"
 
 [services.api]
-  internalPort = 5001
+  internalPort = 5007
   protocol = "tcp" 

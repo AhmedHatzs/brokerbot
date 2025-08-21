@@ -20,8 +20,8 @@ COPY . /app
 # Create conversations directory
 RUN mkdir -p conversations
 
-# Expose port
-EXPOSE 5001
+# Expose port (will be overridden by Railway)
+EXPOSE 5007
 
 # Set environment variables for production
 ENV PYTHONUNBUFFERED=1

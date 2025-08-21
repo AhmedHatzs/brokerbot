@@ -72,6 +72,27 @@ except Exception as e:
     print(f"❌ Failed to initialize LLM service: {e}")
     llm_service = None
 
+@app.route('/', methods=['GET'])
+def root():
+    """Root endpoint - API information and status"""
+    return jsonify({
+        'message': f'Welcome to {Config.BOT_NAME} API',
+        'version': '1.0.0',
+        'status': 'running',
+        'timestamp': datetime.now().isoformat(),
+        'endpoints': {
+            'create_session': 'POST /create_session',
+            'process_message': 'POST /process_message',
+            'session_info': 'GET /session/<session_id>',
+            'conversation_history': 'GET /session/<session_id>/history',
+            'delete_session': 'DELETE /session/<session_id>',
+            'list_sessions': 'GET /sessions',
+            'cleanup_sessions': 'POST /cleanup_sessions',
+            'health': 'GET /health'
+        },
+        'documentation': 'See API_REFERENCE.md for detailed usage instructions'
+    }), 200
+
 @app.route('/process_message', methods=['POST'])
 def process_message():
     """
@@ -95,7 +116,26 @@ def process_message():
     }
     """
     try:
+        # Check if request has JSON content
+        if not request.is_json:
+            return jsonify({
+                'error': 'Content-Type must be application/json',
+                'expected_format': {
+                    'message': 'string (required)',
+                    'session_id': 'string (required)'
+                }
+            }), 400
+        
         data = request.json
+        if not data:
+            return jsonify({
+                'error': 'Request body must contain valid JSON',
+                'expected_format': {
+                    'message': 'string (required)',
+                    'session_id': 'string (required)'
+                }
+            }), 400
+        
         message = data.get('message')
         session_id = data.get('session_id')
         
@@ -315,12 +355,50 @@ def health():
             'timestamp': datetime.now().isoformat()
         }), 200
 
+@app.errorhandler(404)
+def not_found(error):
+    """Handle 404 errors"""
+    return jsonify({
+        'error': 'Endpoint not found',
+        'message': 'The requested endpoint does not exist',
+        'available_endpoints': [
+            'GET /',
+            'POST /create_session',
+            'POST /process_message',
+            'GET /session/<session_id>',
+            'GET /session/<session_id>/history',
+            'DELETE /session/<session_id>',
+            'GET /sessions',
+            'POST /cleanup_sessions',
+            'GET /health'
+        ]
+    }), 404
+
+@app.errorhandler(500)
+def internal_error(error):
+    """Handle 500 errors"""
+    logger.error(f"Internal server error: {error}")
+    return jsonify({
+        'error': 'Internal server error',
+        'message': 'Something went wrong on our end. Please try again later.'
+    }), 500
+
+@app.errorhandler(Exception)
+def handle_exception(error):
+    """Handle any unhandled exceptions"""
+    logger.error(f"Unhandled exception: {error}")
+    return jsonify({
+        'error': 'Unexpected error',
+        'message': 'An unexpected error occurred. Please try again later.'
+    }), 500
+
 if __name__ == '__main__':
     print("🚀 Starting BrokerBot Chat API with Conversation Memory...")
     print("🌐 CORS enabled for API connections")
     print("🧠 Conversation memory with chunking enabled")
     print("🤖 LLM integration enabled")
     print("📝 Endpoints:")
+    print("   • GET / - API information")
     print("   • POST /create_session - Create new conversation")
     print("   • POST /process_message - Send message (requires session_id)")
     print("   • GET /session/<id> - Get session info")
