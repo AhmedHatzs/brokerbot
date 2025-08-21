@@ -34,15 +34,23 @@ print(f"🗄️  Selected storage type: {storage_type}")
 try:
     if storage_type == 'mysql':
         print(f"🗄️  Attempting to connect to MySQL: {Config.MYSQL_HOST}:{Config.MYSQL_PORT}")
-        storage = MySQLStorage(
-            host=Config.MYSQL_HOST,
-            port=Config.MYSQL_PORT,
-            database=Config.MYSQL_DATABASE,
-            user=Config.MYSQL_USER,
-            password=Config.MYSQL_PASSWORD,
-            ssl_mode=Config.MYSQL_SSL_MODE
-        )
-        print(f"✅ MySQL connection successful: {Config.MYSQL_DATABASE}")
+        
+        # FIXED: Use enhanced MySQL validation
+        mysql_ok, mysql_message = Config.validate_mysql_connection()
+        if mysql_ok:
+            storage = MySQLStorage(
+                host=Config.MYSQL_HOST,
+                port=Config.MYSQL_PORT,
+                database=Config.MYSQL_DATABASE,
+                user=Config.MYSQL_USER,
+                password=Config.MYSQL_PASSWORD,
+                ssl_mode=Config.get_mysql_ssl_mode()  # FIXED: Use Railway-optimized SSL mode
+            )
+            print(f"✅ MySQL connection successful: {Config.MYSQL_DATABASE}")
+            print(f"   SSL Mode: {Config.get_mysql_ssl_mode()}")
+        else:
+            print(f"❌ MySQL validation failed: {mysql_message}")
+            raise Exception(f"MySQL connection validation failed: {mysql_message}")
     elif storage_type == 'file':
         storage = FileStorage(Config.STORAGE_DIR)
         print(f"📁 Using file-based conversation storage: {Config.STORAGE_DIR}")
@@ -55,6 +63,7 @@ except Exception as e:
     print(f"   MySQL Port: {Config.MYSQL_PORT}")
     print(f"   MySQL Database: {Config.MYSQL_DATABASE}")
     print(f"   MySQL User: {Config.MYSQL_USER}")
+    print(f"   Environment: {'Production' if Config.is_production() else 'Development'}")
     storage = InMemoryStorage()
     print("💾 Using in-memory conversation storage (data will not persist)")
 

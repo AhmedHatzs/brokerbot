@@ -84,6 +84,83 @@ class Config:
         """Check if running in production environment"""
         return os.getenv('PORT') is not None or os.getenv('RAILWAY_ENVIRONMENT') is not None
     
+    # FIXED: Railway-specific MySQL configuration
+    @classmethod
+    def get_mysql_ssl_mode(cls):
+        """Get SSL mode with Railway-specific fallbacks"""
+        ssl_mode = os.getenv('MYSQL_SSL_MODE', 'REQUIRED')
+        
+        # Railway-specific SSL mode adjustments
+        if cls.is_production():
+            # In Railway, try different SSL modes if REQUIRED fails
+            if ssl_mode == 'REQUIRED':
+                # Railway may have SSL issues, try PREFERRED first
+                return 'PREFERRED'
+        
+        return ssl_mode
+    
+    # FIXED: Enhanced MySQL connection validation
+    @classmethod
+    def validate_mysql_connection(cls):
+        """Validate MySQL connection with detailed error reporting"""
+        if cls.get_storage_type() != 'mysql':
+            return True, "Not using MySQL storage"
+        
+        try:
+            import mysql.connector
+            from mysql.connector import Error
+            
+            # Test connection with different SSL modes
+            ssl_modes = [cls.get_mysql_ssl_mode(), 'PREFERRED', 'DISABLED']
+            
+            for ssl_mode in ssl_modes:
+                try:
+                    ssl_config = {}
+                    if ssl_mode == 'REQUIRED':
+                        ssl_config = {
+                            'ssl_disabled': False,
+                            'ssl_verify_cert': False,
+                            'ssl_verify_identity': False
+                        }
+                    elif ssl_mode == 'DISABLED':
+                        ssl_config = {
+                            'ssl_disabled': True
+                        }
+                    elif ssl_mode == 'PREFERRED':
+                        ssl_config = {
+                            'ssl_disabled': False,
+                            'ssl_verify_cert': False
+                        }
+                    
+                    connection = mysql.connector.connect(
+                        host=cls.MYSQL_HOST,
+                        port=cls.MYSQL_PORT,
+                        database=cls.MYSQL_DATABASE,
+                        user=cls.MYSQL_USER,
+                        password=cls.MYSQL_PASSWORD,
+                        autocommit=True,
+                        **ssl_config
+                    )
+                    
+                    # Test a simple query
+                    cursor = connection.cursor()
+                    cursor.execute("SELECT 1 as test")
+                    result = cursor.fetchone()
+                    cursor.close()
+                    connection.close()
+                    
+                    return True, f"MySQL connection successful with SSL mode: {ssl_mode}"
+                    
+                except Error as e:
+                    if ssl_mode == ssl_modes[-1]:  # Last attempt
+                        return False, f"MySQL connection failed with all SSL modes. Last error: {e}"
+                    continue
+                    
+        except ImportError:
+            return False, "mysql-connector-python not installed"
+        except Exception as e:
+            return False, f"Unexpected error testing MySQL connection: {e}"
+    
     # Bot Configuration (hardcoded)
     BOT_NAME = 'BrokerBot'
     BOT_PERSONALITY = 'You are a helpful AI assistant named BrokerBot. You are knowledgeable, friendly, and always try to provide accurate and helpful responses.'
