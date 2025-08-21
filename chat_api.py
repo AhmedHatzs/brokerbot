@@ -76,8 +76,10 @@ try:
         print("✅ OpenAI connection test successful")
     else:
         print("⚠️  OpenAI connection test failed - check your API key")
+        llm_service = None
 except Exception as e:
     print(f"❌ Failed to initialize LLM service: {e}")
+    print("⚠️  App will run with fallback responses (no AI capabilities)")
     llm_service = None
 
 @app.route('/', methods=['GET'])
@@ -199,9 +201,9 @@ def process_message():
         else:
             # Fallback response if LLM service is not available
             if len(context) > 2:
-                response = f"I remember our conversation! You said: {message}. We've exchanged {len(context)} messages so far."
+                response = f"Hello! I'm BrokerBot. I remember our conversation! You said: '{message}'. We've exchanged {len(context)} messages so far. I'm currently running in fallback mode without AI capabilities."
             else:
-                response = f"Hello! You said: {message}"
+                response = f"Hello! I'm BrokerBot. You said: '{message}'. I'm currently running in fallback mode without AI capabilities. Please check the deployment logs for LLM service issues."
         
         # Add assistant response to conversation
         conversation_memory.add_message(session_id, 'assistant', response)
