@@ -2,7 +2,6 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 from datetime import datetime
 from conversation_memory import ConversationMemory, FileStorage, InMemoryStorage
-from mysql_storage import MySQLStorage
 from config import Config
 from llm_service import LLMService
 import os
@@ -28,42 +27,15 @@ if config_errors:
 Config.print_config()
 
 # Initialize conversation memory system
-storage_type = Config.get_storage_type()
-print(f"🗄️  Selected storage type: {storage_type}")
-
 try:
-    if storage_type == 'mysql':
-        print(f"🗄️  Attempting to connect to MySQL: {Config.MYSQL_HOST}:{Config.MYSQL_PORT}")
-        
-        # FIXED: Use enhanced MySQL validation
-        mysql_ok, mysql_message = Config.validate_mysql_connection()
-        if mysql_ok:
-            storage = MySQLStorage(
-                host=Config.MYSQL_HOST,
-                port=Config.MYSQL_PORT,
-                database=Config.MYSQL_DATABASE,
-                user=Config.MYSQL_USER,
-                password=Config.MYSQL_PASSWORD,
-                ssl_mode=Config.get_mysql_ssl_mode()  # FIXED: Use Railway-optimized SSL mode
-            )
-            print(f"✅ MySQL connection successful: {Config.MYSQL_DATABASE}")
-            print(f"   SSL Mode: {Config.get_mysql_ssl_mode()}")
-        else:
-            print(f"❌ MySQL validation failed: {mysql_message}")
-            raise Exception(f"MySQL connection validation failed: {mysql_message}")
-    elif storage_type == 'file':
+    if Config.STORAGE_TYPE == 'file':
         storage = FileStorage(Config.STORAGE_DIR)
         print(f"📁 Using file-based conversation storage: {Config.STORAGE_DIR}")
     else:
         storage = InMemoryStorage()
         print("💾 Using in-memory conversation storage (data will not persist)")
 except Exception as e:
-    print(f"⚠️  Storage initialization failed, falling back to in-memory: {e}")
-    print(f"   MySQL Host: {Config.MYSQL_HOST}")
-    print(f"   MySQL Port: {Config.MYSQL_PORT}")
-    print(f"   MySQL Database: {Config.MYSQL_DATABASE}")
-    print(f"   MySQL User: {Config.MYSQL_USER}")
-    print(f"   Environment: {'Production' if Config.is_production() else 'Development'}")
+    print(f"⚠️  File storage failed, falling back to in-memory: {e}")
     storage = InMemoryStorage()
     print("💾 Using in-memory conversation storage (data will not persist)")
 
@@ -85,51 +57,9 @@ try:
         print("✅ OpenAI connection test successful")
     else:
         print("⚠️  OpenAI connection test failed - check your API key")
-        llm_service = None
 except Exception as e:
     print(f"❌ Failed to initialize LLM service: {e}")
-    print("⚠️  App will run with fallback responses (no AI capabilities)")
     llm_service = None
-
-@app.route('/', methods=['GET'])
-def root():
-    """Root endpoint - API information and status"""
-    try:
-        return jsonify({
-            'message': f'Welcome to {Config.BOT_NAME} API',
-            'version': '1.0.0',
-            'status': 'running',
-            'timestamp': datetime.now().isoformat(),
-            'environment': 'production' if os.getenv('PORT') else 'development',
-            'port': os.getenv('PORT', '5001'),
-            'endpoints': {
-                'create_session': 'POST /create_session',
-                'process_message': 'POST /process_message',
-                'session_info': 'GET /session/<session_id>',
-                'conversation_history': 'GET /session/<session_id>/history',
-                'delete_session': 'DELETE /session/<session_id>',
-                'list_sessions': 'GET /sessions',
-                'cleanup_sessions': 'POST /cleanup_sessions',
-                'health': 'GET /health',
-                'test': 'GET /test'
-            },
-            'documentation': 'See API_REFERENCE.md for detailed usage instructions'
-        }), 200
-    except Exception as e:
-        logger.error(f"Error in root endpoint: {e}")
-        return jsonify({
-            'error': 'Internal error in root endpoint',
-            'message': str(e)
-        }), 500
-
-@app.route('/test', methods=['GET'])
-def test():
-    """Simple test endpoint to verify the API is working"""
-    return jsonify({
-        'status': 'success',
-        'message': 'API is working correctly',
-        'timestamp': datetime.now().isoformat()
-    }), 200
 
 @app.route('/process_message', methods=['POST'])
 def process_message():
@@ -154,26 +84,7 @@ def process_message():
     }
     """
     try:
-        # Check if request has JSON content
-        if not request.is_json:
-            return jsonify({
-                'error': 'Content-Type must be application/json',
-                'expected_format': {
-                    'message': 'string (required)',
-                    'session_id': 'string (required)'
-                }
-            }), 400
-        
         data = request.json
-        if not data:
-            return jsonify({
-                'error': 'Request body must contain valid JSON',
-                'expected_format': {
-                    'message': 'string (required)',
-                    'session_id': 'string (required)'
-                }
-            }), 400
-        
         message = data.get('message')
         session_id = data.get('session_id')
         
@@ -210,9 +121,9 @@ def process_message():
         else:
             # Fallback response if LLM service is not available
             if len(context) > 2:
-                response = f"Hello! I'm BrokerBot. I remember our conversation! You said: '{message}'. We've exchanged {len(context)} messages so far. I'm currently running in fallback mode without AI capabilities."
+                response = f"I remember our conversation! You said: {message}. We've exchanged {len(context)} messages so far."
             else:
-                response = f"Hello! I'm BrokerBot. You said: '{message}'. I'm currently running in fallback mode without AI capabilities. Please check the deployment logs for LLM service issues."
+                response = f"Hello! You said: {message}"
         
         # Add assistant response to conversation
         conversation_memory.add_message(session_id, 'assistant', response)
@@ -357,15 +268,7 @@ def cleanup_expired_sessions():
 def health():
     """Health check endpoint with memory system and LLM service status"""
     try:
-        # Test storage connection
-        storage_status = "unknown"
-        total_sessions = 0
-        try:
-            total_sessions = len(conversation_memory.storage.list_sessions())
-            storage_status = "healthy"
-        except Exception as e:
-            storage_status = f"error: {str(e)}"
-            logger.error(f"Storage error in health check: {e}")
+        total_sessions = len(conversation_memory.storage.list_sessions())
         
         # Check LLM service status
         llm_status = "unavailable"
@@ -379,16 +282,12 @@ def health():
                     llm_status = "connection_failed"
             except Exception as e:
                 llm_status = f"error: {str(e)}"
-                logger.error(f"LLM error in health check: {e}")
         
         return jsonify({
             'status': 'API is running',
             'timestamp': datetime.now().isoformat(),
-            'environment': 'production' if os.getenv('PORT') else 'development',
-            'port': os.getenv('PORT', '5001'),
             'conversation_memory': {
                 'storage_type': type(conversation_memory.storage).__name__,
-                'storage_status': storage_status,
                 'total_sessions': total_sessions,
                 'max_tokens_per_chunk': conversation_memory.max_tokens_per_chunk,
                 'max_context_tokens': conversation_memory.max_context_tokens
@@ -402,46 +301,8 @@ def health():
         logger.error(f"Error in health check: {e}")
         return jsonify({
             'status': 'API is running but some services may have issues',
-            'error': str(e),
             'timestamp': datetime.now().isoformat()
         }), 200
-
-@app.errorhandler(404)
-def not_found(error):
-    """Handle 404 errors"""
-    return jsonify({
-        'error': 'Endpoint not found',
-        'message': 'The requested endpoint does not exist',
-        'available_endpoints': [
-            'GET /',
-            'POST /create_session',
-            'POST /process_message',
-            'GET /session/<session_id>',
-            'GET /session/<session_id>/history',
-            'DELETE /session/<session_id>',
-            'GET /sessions',
-            'POST /cleanup_sessions',
-            'GET /health'
-        ]
-    }), 404
-
-@app.errorhandler(500)
-def internal_error(error):
-    """Handle 500 errors"""
-    logger.error(f"Internal server error: {error}")
-    return jsonify({
-        'error': 'Internal server error',
-        'message': 'Something went wrong on our end. Please try again later.'
-    }), 500
-
-@app.errorhandler(Exception)
-def handle_exception(error):
-    """Handle any unhandled exceptions"""
-    logger.error(f"Unhandled exception: {error}")
-    return jsonify({
-        'error': 'Unexpected error',
-        'message': 'An unexpected error occurred. Please try again later.'
-    }), 500
 
 if __name__ == '__main__':
     print("🚀 Starting BrokerBot Chat API with Conversation Memory...")
@@ -449,7 +310,6 @@ if __name__ == '__main__':
     print("🧠 Conversation memory with chunking enabled")
     print("🤖 LLM integration enabled")
     print("📝 Endpoints:")
-    print("   • GET / - API information")
     print("   • POST /create_session - Create new conversation")
     print("   • POST /process_message - Send message (requires session_id)")
     print("   • GET /session/<id> - Get session info")

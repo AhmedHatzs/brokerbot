@@ -2,8 +2,8 @@
   dockerfile = "Dockerfile"
 
 [deploy]
-  startCommand = "python main.py"
+  startCommand = "python run_api.py"
 
 [services.api]
-  internalPort = 5007
+  internalPort = 5001
   protocol = "tcp" 

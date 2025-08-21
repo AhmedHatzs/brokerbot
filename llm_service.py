@@ -4,6 +4,7 @@ BrokerBot LLM Service
 Handles OpenAI Assistant API integration for chat responses
 """
 
+import openai
 from typing import List, Dict, Optional
 from config import Config
 import logging
@@ -24,15 +25,7 @@ class LLMService:
         if not Config.OPENAI_ASSISTANT_ID:
             raise ValueError("OPENAI_ASSISTANT_ID is required")
         
-        try:
-            # FIXED: Simple OpenAI client initialization without problematic parameters
-            import openai
-            self.client = openai.OpenAI(api_key=Config.OPENAI_API_KEY)
-            logger.info("OpenAI client initialized successfully")
-        except Exception as e:
-            logger.error(f"Failed to initialize OpenAI client: {e}")
-            raise ValueError(f"OpenAI client initialization failed: {e}")
-        
+        self.client = openai.OpenAI(api_key=Config.OPENAI_API_KEY)
         self.assistant_id = Config.OPENAI_ASSISTANT_ID
         self.model = Config.OPENAI_MODEL
         self.max_tokens = Config.OPENAI_MAX_TOKENS
@@ -97,12 +90,8 @@ class LLMService:
             
             logger.info(f"Started assistant run {run.id}")
             
-            # FIXED: Add timeout protection
-            max_wait_time = 60  # Maximum wait time in seconds
-            wait_time = 0
-            
             # Wait for the run to complete
-            while wait_time < max_wait_time:
+            while True:
                 run_status = self.client.beta.threads.runs.retrieve(
                     thread_id=thread_id,
                     run_id=run.id
@@ -119,11 +108,6 @@ class LLMService:
                 
                 # Wait a bit before checking again
                 time.sleep(1)
-                wait_time += 1
-            
-            if wait_time >= max_wait_time:
-                logger.error("Assistant run timed out")
-                return "I apologize, but the request timed out. Please try again."
             
             # Get the assistant's response
             messages = self.client.beta.threads.messages.list(thread_id=thread_id)
@@ -142,15 +126,21 @@ class LLMService:
             logger.error("No assistant response found")
             return "I apologize, but I didn't receive a response from my assistant."
                 
+        except openai.AuthenticationError:
+            logger.error("OpenAI authentication failed - check your API key")
+            return "I apologize, but there's an authentication issue with my AI service."
+            
+        except openai.RateLimitError:
+            logger.error("OpenAI rate limit exceeded")
+            return "I'm receiving too many requests right now. Please try again in a moment."
+            
+        except openai.APIError as e:
+            logger.error(f"OpenAI API error: {e}")
+            return "I'm experiencing technical difficulties. Please try again later."
+            
         except Exception as e:
             logger.error(f"Unexpected error in LLM service: {e}")
-            # FIXED: Better error handling
-            if 'authentication' in str(e).lower():
-                return "I apologize, but there's an authentication issue with my AI service."
-            elif 'rate limit' in str(e).lower():
-                return "I'm receiving too many requests right now. Please try again in a moment."
-            else:
-                return "I encountered an unexpected error. Please try again."
+            return "I encountered an unexpected error. Please try again."
     
     def test_connection(self) -> bool:
         """
@@ -182,4 +172,4 @@ class LLMService:
             "temperature": self.temperature,
             "bot_personality": self.bot_personality[:100] + "..." if len(self.bot_personality) > 100 else self.bot_personality,
             "active_threads": len(self.session_threads)
-        }
+        } 
