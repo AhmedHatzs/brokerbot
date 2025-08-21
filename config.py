@@ -52,16 +52,37 @@ class Config:
             return 'memory'
         
         if cls.STORAGE_TYPE == 'mysql':
-            # Check if MySQL environment variables are set
-            if not all([cls.MYSQL_HOST, cls.MYSQL_DATABASE, cls.MYSQL_USER, cls.MYSQL_PASSWORD]):
-                print("⚠️  MySQL environment variables not fully configured, falling back to in-memory storage")
+            # FIXED: Better checking for MySQL configuration
+            missing_vars = []
+            if not cls.MYSQL_HOST:
+                missing_vars.append('MYSQL_HOST')
+            if not cls.MYSQL_DATABASE:
+                missing_vars.append('MYSQL_DATABASE')
+            if not cls.MYSQL_USER:
+                missing_vars.append('MYSQL_USER')
+            if not cls.MYSQL_PASSWORD:
+                missing_vars.append('MYSQL_PASSWORD')
+            
+            if missing_vars:
+                print(f"⚠️ MySQL environment variables missing: {', '.join(missing_vars)}")
+                print("Falling back to in-memory storage")
                 return 'memory'
+            else:
+                print("✅ All MySQL environment variables found")
+                return 'mysql'
+        
         return cls.STORAGE_TYPE
     
-    # Server Configuration (hardcoded)
-    PORT = 5001
+    # FIXED: Server Configuration - Railway-compatible
+    PORT = int(os.getenv('PORT', '5001'))  # Railway sets PORT env var
     HOST = '0.0.0.0'
-    DEBUG = False
+    DEBUG = os.getenv('DEBUG', 'false').lower() == 'true'
+    
+    # FIXED: Environment detection
+    @classmethod
+    def is_production(cls):
+        """Check if running in production environment"""
+        return os.getenv('PORT') is not None or os.getenv('RAILWAY_ENVIRONMENT') is not None
     
     # Bot Configuration (hardcoded)
     BOT_NAME = 'BrokerBot'
@@ -80,7 +101,8 @@ class Config:
             errors.append("OPENAI_ASSISTANT_ID environment variable is required")
         
         # Check for MySQL configuration if using MySQL storage
-        if cls.STORAGE_TYPE == 'mysql':
+        storage_type = cls.get_storage_type()  # FIXED: Use the method instead of direct property
+        if storage_type == 'mysql':
             if not cls.MYSQL_HOST:
                 errors.append("MYSQL_HOST environment variable is required for MySQL storage")
             if not cls.MYSQL_DATABASE:
@@ -109,6 +131,7 @@ class Config:
     def print_config(cls):
         """Print current configuration (without sensitive data)"""
         print("🔧 BrokerBot Configuration:")
+        print(f"   • Environment: {'Production' if cls.is_production() else 'Development'}")  # FIXED: Added environment detection
         print(f"   • OpenAI Model: {cls.OPENAI_MODEL}")
         print(f"   • OpenAI Assistant ID: {cls.OPENAI_ASSISTANT_ID[:8] + '...' if cls.OPENAI_ASSISTANT_ID else '❌ Missing'}")
         print(f"   • Max Tokens: {cls.OPENAI_MAX_TOKENS}")
@@ -116,13 +139,23 @@ class Config:
         print(f"   • Max Tokens/Chunk: {cls.MAX_TOKENS_PER_CHUNK}")
         print(f"   • Max Context Tokens: {cls.MAX_CONTEXT_TOKENS}")
         print(f"   • Session Timeout: {cls.SESSION_TIMEOUT_HOURS} hours")
-        print(f"   • Storage Type: {cls.STORAGE_TYPE}")
-        if cls.STORAGE_TYPE == 'mysql':
+        print(f"   • Storage Type: {cls.get_storage_type()}")  # FIXED: Use method
+        print(f"   • Force Memory Storage: {cls.FORCE_MEMORY_STORAGE}")  # FIXED: Added this debug info
+        
+        if cls.get_storage_type() == 'mysql':  # FIXED: Use method
             print(f"   • MySQL Database: {cls.MYSQL_DATABASE}")
             print(f"   • MySQL Host: {cls.MYSQL_HOST}")
             print(f"   • MySQL Port: {cls.MYSQL_PORT}")
+        
         print(f"   • Bot Name: {cls.BOT_NAME}")
         print(f"   • API Key: {'✅ Set' if cls.OPENAI_API_KEY else '❌ Missing'}")
         print(f"   • Debug Mode: {cls.DEBUG}")
         print(f"   • Port: {cls.PORT}")
-        print(f"   • Host: {cls.HOST}") 
+        print(f"   • Host: {cls.HOST}")
+        
+        # FIXED: Added environment variables debug info
+        print("📋 Environment Variables Debug:")
+        env_vars = ['PORT', 'RAILWAY_ENVIRONMENT', 'FORCE_MEMORY_STORAGE', 'MYSQL_HOST', 'MYSQL_DATABASE']
+        for var in env_vars:
+            value = os.getenv(var)
+            print(f"   • {var}: {'✅ Set' if value else '❌ Not set'}")
