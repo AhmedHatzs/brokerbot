@@ -251,10 +251,11 @@ Key settings in `config.py`:
 
 ## 🚀 Production Deployment
 
-The app uses different servers for different environments:
+The app automatically detects the environment:
 - **Development**: Uses Flask development server on port 5001
-- **Railway Production**: Uses Gunicorn WSGI server (production-grade)
-- **Docker Production**: Uses Gunicorn WSGI server (production-grade)
+- **Production**: Uses Gunicorn WSGI server (production-grade)
+  - Railway: Automatically uses Railway's PORT environment variable
+  - Docker: Uses port 5001
 
 ## 🚀 Deployment
 

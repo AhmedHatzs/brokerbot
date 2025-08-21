@@ -20,10 +20,15 @@ if __name__ == "__main__":
     
     # Check if running in production (Railway sets PORT environment variable)
     if os.getenv('PORT'):
-        # Production: Use Railway's PORT
+        # Production: Use Gunicorn
         port = int(os.getenv('PORT'))
-        print(f"🚀 Production mode: Using Railway port {port}")
-        app.run(host="0.0.0.0", port=port, debug=False)
+        print(f"🚀 Production mode: Using Gunicorn on port {port}")
+        import subprocess
+        subprocess.run([
+            "gunicorn", 
+            "--bind", f"0.0.0.0:{port}", 
+            "chat_api:app"
+        ])
     else:
         # Development: Use Flask development server
         print("🔧 Development mode: Using Flask development server")
