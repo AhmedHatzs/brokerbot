@@ -1,9 +1,12 @@
 [build]
-  dockerfile = "Dockerfile"
+builder = "dockerfile"
 
 [deploy]
-  startCommand = "python start.py"
+startCommand = "python start.py"
+healthcheckPath = "/health"
+healthcheckTimeout = 300
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 10
 
-[services.api]
-  internalPort = 5001
-  protocol = "tcp" 
+[env]
+RAILWAY_ENVIRONMENT = "production" 

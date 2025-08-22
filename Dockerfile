@@ -10,6 +10,7 @@ WORKDIR /app
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
     gcc \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first for better caching
@@ -25,12 +26,12 @@ COPY . /app/
 RUN adduser --disabled-password --gecos '' appuser && chown -R appuser:appuser /app
 USER appuser
 
-# Expose the API port
-EXPOSE 5001
+# Expose the API port (Railway will set PORT environment variable)
+EXPOSE 5007
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:5001/health || exit 1
+    CMD curl -f http://localhost:5007/health || exit 1
 
 # Use the production-ready startup script
 CMD ["python", "start.py"] 

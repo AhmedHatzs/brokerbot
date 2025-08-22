@@ -59,8 +59,8 @@ def main():
         start_development()
 
 def start_production():
-    """Start the API in production mode with uvicorn"""
-    port = os.getenv('PORT', '5001')
+    """Start the API in production mode with gunicorn"""
+    port = os.getenv('PORT', '5007')
     host = os.getenv('HOST', '0.0.0.0')
     
     print(f"🌐 Server will run on {host}:{port}")
@@ -72,7 +72,8 @@ def start_production():
             "chat_api:app", 
             "--bind", f"{host}:{port}",
             "--workers", "1",
-            "--log-level", "info"
+            "--log-level", "info",
+            "--timeout", "120"
         ])
     except KeyboardInterrupt:
         print("\n🛑 API server stopped")

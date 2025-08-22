@@ -290,7 +290,7 @@ if __name__ == '__main__':
     print("💬 Endpoint: /process_message")
     
     # Get port from Railway environment or use default
-    port = int(os.getenv('PORT', 5001))
+    port = int(os.getenv('PORT', 5007))
     host = os.getenv('HOST', '0.0.0.0')
     
     print(f"🔗 Running on: http://{host}:{port}")
