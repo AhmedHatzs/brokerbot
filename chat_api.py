@@ -38,10 +38,11 @@ assistant_id = os.getenv('OPENAI_ASSISTANT_ID')
 
 # Helper function to create client with beta headers
 def get_openai_client():
-    return OpenAI(
-        api_key=os.getenv('OPENAI_API_KEY'),
-        extra_headers={"OpenAI-Beta": "assistants=v2"}
-    )
+    client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+    # Set beta header directly on the client
+    if hasattr(client, '_client') and hasattr(client._client, 'headers'):
+        client._client.headers["OpenAI-Beta"] = "assistants=v2"
+    return client
 
 # MySQL Configuration
 def get_mysql_config():
