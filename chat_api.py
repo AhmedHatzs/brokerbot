@@ -160,6 +160,15 @@ def get_conversation_history(session_id):
         print(f"Error getting conversation history: {e}")
         return []
 
+@app.route('/', methods=['GET'])
+def root():
+    """Simple root endpoint for basic connectivity testing"""
+    return jsonify({
+        'message': "Burdy's Auto Detail Chatbot API is running",
+        'status': 'ok',
+        'timestamp': datetime.now().isoformat()
+    }), 200
+
 @app.route('/process_message', methods=['POST'])
 def process_message():
     """Process chat message with OpenAI and save to MySQL"""
@@ -223,13 +232,18 @@ def process_message():
 
 @app.route('/health', methods=['GET'])
 def health():
-    """Production-ready health check endpoint"""
+    """Production-ready health check endpoint optimized for Railway"""
     try:
-        # Check database connectivity
+        # Check database connectivity (fast check)
         db_status = "healthy"
         try:
             connection = get_mysql_connection()
             if connection:
+                # Simple ping test
+                cursor = connection.cursor()
+                cursor.execute("SELECT 1")
+                cursor.fetchone()
+                cursor.close()
                 connection.close()
             else:
                 db_status = "unhealthy"
@@ -237,14 +251,15 @@ def health():
             print(f"Database health check failed: {e}")
             db_status = "unhealthy"
         
-        # Check OpenAI API connectivity
+        # Check OpenAI API connectivity (minimal test)
         openai_status = "healthy"
         try:
-            # Simple test call to OpenAI
+            # Very minimal test call to OpenAI
             test_response = client.chat.completions.create(
                 model="gpt-3.5-turbo",
-                messages=[{"role": "user", "content": "test"}],
-                max_tokens=5
+                messages=[{"role": "user", "content": "ping"}],
+                max_tokens=1,
+                temperature=0
             )
         except Exception as e:
             print(f"OpenAI health check failed: {e}")

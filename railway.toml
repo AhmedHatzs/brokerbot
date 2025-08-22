@@ -4,9 +4,9 @@ builder = "dockerfile"
 [deploy]
 startCommand = "python start.py"
 healthcheckPath = "/health"
-healthcheckTimeout = 300
+healthcheckTimeout = 10
 restartPolicyType = "on_failure"
-restartPolicyMaxRetries = 10
+restartPolicyMaxRetries = 5
 
 [env]
 RAILWAY_ENVIRONMENT = "production" 
