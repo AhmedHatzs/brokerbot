@@ -34,14 +34,13 @@ else:
 
 # OpenAI Configuration
 from openai import OpenAI
-client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
 assistant_id = os.getenv('OPENAI_ASSISTANT_ID')
 
 # Helper function to create client with beta headers
 def get_openai_client():
     return OpenAI(
         api_key=os.getenv('OPENAI_API_KEY'),
-        default_headers={"OpenAI-Beta": "assistants=v2"}
+        extra_headers={"OpenAI-Beta": "assistants=v2"}
     )
 
 # MySQL Configuration
@@ -392,6 +391,8 @@ def process_message():
             
             # Get client with beta headers
             openai_client = get_openai_client()
+            print(f"🔧 OpenAI client created with headers: {openai_client._client.headers.get('OpenAI-Beta', 'NOT SET')}")
+            print(f"🔧 All headers: {dict(openai_client._client.headers)}")
             
             # Create or get thread for this conversation
             if not thread_id:
