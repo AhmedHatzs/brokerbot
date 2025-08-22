@@ -64,9 +64,12 @@ def start_production():
     host = os.getenv('HOST', '0.0.0.0')
     
     print(f"🌐 Server will run on {host}:{port}")
+    print(f"🔧 Environment: {os.getenv('RAILWAY_ENVIRONMENT', 'unknown')}")
+    print(f"🔑 OpenAI API Key: {'✅ Set' if os.getenv('OPENAI_API_KEY') else '❌ Missing'}")
+    print(f"🗄️  MySQL Host: {os.getenv('MYSQL_HOST', 'Not set')}")
     
     try:
-        # Railway-optimized gunicorn settings
+        # Railway-optimized gunicorn settings with better error handling
         subprocess.run([
             sys.executable, "-m", "gunicorn",
             "chat_api:app", 
@@ -76,12 +79,13 @@ def start_production():
             "--worker-connections", "1000",
             "--max-requests", "1000",
             "--max-requests-jitter", "50",
-            "--timeout", "30",  # Reduced timeout for Railway
+            "--timeout", "60",  # Increased timeout for Railway
             "--keep-alive", "2",
-            "--log-level", "info",
+            "--log-level", "debug",  # More verbose logging for debugging
             "--access-logfile", "-",
             "--error-logfile", "-",
-            "--preload"  # Preload app for faster startup
+            "--preload",  # Preload app for faster startup
+            "--reload-on-exception"  # Reload on unhandled exceptions
         ])
     except KeyboardInterrupt:
         print("\n🛑 API server stopped")

@@ -140,18 +140,30 @@ def init_database():
 # Initialize database when app is created (for gunicorn compatibility)
 print("🔧 Initializing database...")
 import threading
+import time
 
 def init_db_background():
-    """Initialize database in background thread"""
-    try:
-        if init_database():
-            print("✅ Database initialized successfully")
-        else:
-            print("⚠️  Database initialization failed - API will continue without database")
-            print("💡 Check your MySQL environment variables and connection settings")
-    except Exception as e:
-        print(f"⚠️  Database initialization error: {e} - API will continue without database")
-        print("💡 This might be due to network issues, SSL configuration, or missing environment variables")
+    """Initialize database in background thread with retry logic"""
+    max_retries = 3
+    retry_delay = 5  # seconds
+    
+    for attempt in range(max_retries):
+        try:
+            print(f"🔄 Database initialization attempt {attempt + 1}/{max_retries}")
+            if init_database():
+                print("✅ Database initialized successfully")
+                return
+            else:
+                print(f"⚠️  Database initialization failed (attempt {attempt + 1})")
+        except Exception as e:
+            print(f"⚠️  Database initialization error (attempt {attempt + 1}): {e}")
+        
+        if attempt < max_retries - 1:
+            print(f"⏳ Retrying in {retry_delay} seconds...")
+            time.sleep(retry_delay)
+    
+    print("❌ Database initialization failed after all attempts - API will continue without database")
+    print("💡 Check your MySQL environment variables and connection settings")
 
 # Start database initialization in background thread
 db_thread = threading.Thread(target=init_db_background, daemon=True)
@@ -223,6 +235,16 @@ def root():
     return jsonify({
         'message': "Burdy's Auto Detail Chatbot API is running",
         'status': 'ok',
+        'timestamp': datetime.now().isoformat(),
+        'environment': os.getenv('RAILWAY_ENVIRONMENT', 'development'),
+        'port': os.getenv('PORT', '5007')
+    }), 200
+
+@app.route('/ping', methods=['GET'])
+def ping():
+    """Simple ping endpoint for Railway health checks"""
+    return jsonify({
+        'pong': True,
         'timestamp': datetime.now().isoformat()
     }), 200
 
