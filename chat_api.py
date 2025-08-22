@@ -34,11 +34,15 @@ else:
 
 # OpenAI Configuration
 from openai import OpenAI
-client = OpenAI(
-    api_key=os.getenv('OPENAI_API_KEY'),
-    default_headers={"OpenAI-Beta": "assistants=v2"}
-)
+client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
 assistant_id = os.getenv('OPENAI_ASSISTANT_ID')
+
+# Helper function to create client with beta headers
+def get_openai_client():
+    return OpenAI(
+        api_key=os.getenv('OPENAI_API_KEY'),
+        default_headers={"OpenAI-Beta": "assistants=v2"}
+    )
 
 # MySQL Configuration
 def get_mysql_config():
@@ -386,36 +390,39 @@ def process_message():
             if not assistant_id:
                 return jsonify({'error': 'OpenAI Assistant ID not configured'}), 500
             
+            # Get client with beta headers
+            openai_client = get_openai_client()
+            
             # Create or get thread for this conversation
             if not thread_id:
                 # Create new thread
-                thread = client.beta.threads.create()
+                thread = openai_client.beta.threads.create()
                 thread_id = thread.id
             else:
                 # Use existing thread
                 try:
-                    thread = client.beta.threads.retrieve(thread_id)
+                    thread = openai_client.beta.threads.retrieve(thread_id)
                 except Exception:
                     # Thread doesn't exist, create new one
-                    thread = client.beta.threads.create()
+                    thread = openai_client.beta.threads.create()
                     thread_id = thread.id
             
             # Add user message to thread
-            client.beta.threads.messages.create(
+            openai_client.beta.threads.messages.create(
                 thread_id=thread_id,
                 role="user",
                 content=message
             )
             
             # Run the assistant
-            run = client.beta.threads.runs.create(
+            run = openai_client.beta.threads.runs.create(
                 thread_id=thread_id,
                 assistant_id=assistant_id
             )
             
             # Wait for the run to complete
             while True:
-                run_status = client.beta.threads.runs.retrieve(
+                run_status = openai_client.beta.threads.runs.retrieve(
                     thread_id=thread_id,
                     run_id=run.id
                 )
@@ -431,7 +438,7 @@ def process_message():
                 time.sleep(1)  # Wait 1 second before checking again
             
             # Get the assistant's response
-            messages = client.beta.threads.messages.list(thread_id=thread_id)
+            messages = openai_client.beta.threads.messages.list(thread_id=thread_id)
             assistant_response = messages.data[0].content[0].text.value
             
         except Exception as e:
