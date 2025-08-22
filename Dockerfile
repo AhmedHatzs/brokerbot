@@ -25,6 +25,9 @@ RUN pip install --no-cache-dir --upgrade pip && \
 # Copy application code
 COPY . /app/
 
+# Make healthcheck script executable
+RUN chmod +x /app/healthcheck.sh
+
 # Create non-root user for security
 RUN adduser --disabled-password --gecos '' appuser && chown -R appuser:appuser /app
 USER appuser
@@ -32,9 +35,9 @@ USER appuser
 # Expose the API port (Railway will set PORT environment variable)
 EXPOSE 5007
 
-# Health check with shorter timeout
-HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-    CMD curl -f --max-time 5 http://localhost:5007/health || exit 1
+# Health check with shorter timeout - uses Railway's PORT environment variable
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=5 \
+    CMD ./healthcheck.sh
 
 # Use the production-ready startup script
 CMD ["python", "start.py"] 

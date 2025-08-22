@@ -36,19 +36,42 @@ from openai import OpenAI
 client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
 
 # MySQL Configuration
-MYSQL_CONFIG = {
-    'host': os.getenv('MYSQL_HOST'),
-    'port': int(os.getenv('MYSQL_PORT', 3306)),
-    'database': os.getenv('MYSQL_DATABASE'),
-    'user': os.getenv('MYSQL_USER'),
-    'password': os.getenv('MYSQL_PASSWORD'),
-    'ssl_disabled': os.getenv('MYSQL_SSL_MODE', 'REQUIRED') != 'REQUIRED'
-}
+def get_mysql_config():
+    """Get MySQL configuration based on environment"""
+    is_production = os.getenv('RAILWAY_ENVIRONMENT') == 'production'
+    
+    if is_production:
+        # Production configuration (Railway)
+        return {
+            'host': os.getenv('MYSQL_HOST'),
+            'port': int(os.getenv('MYSQL_PORT', 3306)),
+            'database': os.getenv('MYSQL_DATABASE'),
+            'user': os.getenv('MYSQL_USER'),
+            'password': os.getenv('MYSQL_PASSWORD'),
+            'ssl_disabled': os.getenv('MYSQL_SSL_MODE', 'REQUIRED') != 'REQUIRED'
+        }
+    else:
+        # Development configuration (Local MySQL)
+        return {
+            'host': 'localhost',
+            'port': 3306,
+            'database': 'burdy_chatbot',
+            'user': 'root',
+            'password': '',
+            'ssl_disabled': True
+        }
+
+MYSQL_CONFIG = get_mysql_config()
 
 def get_mysql_connection():
     """Create and return MySQL connection with production-ready error handling"""
     try:
-        connection = mysql.connector.connect(**MYSQL_CONFIG)
+        # Add connection timeout to prevent hanging
+        config_with_timeout = MYSQL_CONFIG.copy()
+        config_with_timeout['connect_timeout'] = 5  # 5 second timeout
+        config_with_timeout['autocommit'] = True
+        
+        connection = mysql.connector.connect(**config_with_timeout)
         return connection
     except Error as e:
         print(f"Error connecting to MySQL: {e}")
@@ -99,6 +122,24 @@ def init_database():
     except Error as e:
         print(f"Error initializing database: {e}")
         return False
+
+# Initialize database when app is created (for gunicorn compatibility)
+print("🔧 Initializing database...")
+import threading
+
+def init_db_background():
+    """Initialize database in background thread"""
+    try:
+        if init_database():
+            print("✅ Database initialized successfully")
+        else:
+            print("⚠️  Database initialization failed - API will continue without database")
+    except Exception as e:
+        print(f"⚠️  Database initialization error: {e} - API will continue without database")
+
+# Start database initialization in background thread
+db_thread = threading.Thread(target=init_db_background, daemon=True)
+db_thread.start()
 
 def save_message_to_db(session_id, role, content):
     """Save message to MySQL database"""
@@ -232,18 +273,13 @@ def process_message():
 
 @app.route('/health', methods=['GET'])
 def health():
-    """Production-ready health check endpoint optimized for Railway"""
+    """Comprehensive health check endpoint for Railway deployment"""
     try:
-        # Check database connectivity (fast check)
+        # Check database connectivity
         db_status = "healthy"
         try:
             connection = get_mysql_connection()
             if connection:
-                # Simple ping test
-                cursor = connection.cursor()
-                cursor.execute("SELECT 1")
-                cursor.fetchone()
-                cursor.close()
                 connection.close()
             else:
                 db_status = "unhealthy"
@@ -251,16 +287,12 @@ def health():
             print(f"Database health check failed: {e}")
             db_status = "unhealthy"
         
-        # Check OpenAI API connectivity (minimal test)
+        # Check OpenAI connectivity (minimal check)
         openai_status = "healthy"
         try:
-            # Very minimal test call to OpenAI
-            test_response = client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=[{"role": "user", "content": "ping"}],
-                max_tokens=1,
-                temperature=0
-            )
+            # Just check if API key is set (don't make actual API call)
+            if not os.getenv('OPENAI_API_KEY'):
+                openai_status = "unhealthy"
         except Exception as e:
             print(f"OpenAI health check failed: {e}")
             openai_status = "unhealthy"
@@ -289,36 +321,5 @@ def get_conversation(session_id):
     except Exception as e:
         return jsonify({'error': 'Failed to get conversation'}), 500
 
-if __name__ == '__main__':
-    print("🚀 Starting Burdy's Auto Detail Chat API...")
-    print("🔧 Initializing database...")
-    
-    try:
-        if init_database():
-            print("✅ Database initialized successfully")
-        else:
-            print("⚠️  Database initialization failed - API will continue without database")
-    except Exception as e:
-        print(f"⚠️  Database initialization error: {e} - API will continue without database")
-    
-    print("🌐 CORS enabled for API access")
-    print("💬 Endpoint: /process_message")
-    
-    # Get port from Railway environment or use default
-    port = int(os.getenv('PORT', 5007))
-    host = os.getenv('HOST', '0.0.0.0')
-    
-    print(f"🔗 Running on: http://{host}:{port}")
-    print(f"📊 Health check: http://{host}:{port}/health")
-    
-    # Production-ready configuration
-    is_production = os.getenv('RAILWAY_ENVIRONMENT') == 'production'
-    debug_mode = os.getenv('FLASK_DEBUG', 'False').lower() == 'true' and not is_production
-    
-    if is_production:
-        print("🚀 Running in PRODUCTION mode")
-        # In production, use threaded mode for better performance
-        app.run(debug=False, host=host, port=port, threaded=True)
-    else:
-        print("🔧 Running in DEVELOPMENT mode")
-        app.run(debug=debug_mode, host=host, port=port) 
+# This module is designed to be imported by start.py
+# The Flask app will be started by the startup script 

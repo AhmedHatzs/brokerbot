@@ -49,7 +49,7 @@ def main():
     print("✅ Starting API server...")
     
     # Determine if we're in production (Railway) or development
-    is_production = os.getenv('RAILWAY_ENVIRONMENT') == 'production' or os.getenv('PORT') is not None
+    is_production = os.getenv('RAILWAY_ENVIRONMENT') == 'production'
     
     if is_production:
         print("🚀 Starting in PRODUCTION mode (Railway)")
@@ -87,16 +87,27 @@ def start_production():
         print("\n🛑 API server stopped")
     except Exception as e:
         print(f"❌ Error starting API: {e}")
+        # Exit with error code for Railway to restart
+        sys.exit(1)
 
 def start_development():
     """Start the API in development mode"""
     try:
-        # Use Flask development server
-        subprocess.run([sys.executable, "chat_api.py"])
+        # Import and run Flask app directly (no subprocess)
+        from chat_api import app
+        
+        port = int(os.getenv('PORT', 5007))
+        host = os.getenv('HOST', '0.0.0.0')
+        
+        print(f"🌐 Server will run on {host}:{port}")
+        print("🔧 Running in DEVELOPMENT mode")
+        
+        app.run(debug=True, host=host, port=port)
     except KeyboardInterrupt:
         print("\n🛑 API server stopped")
     except Exception as e:
         print(f"❌ Error starting API: {e}")
+        sys.exit(1)
 
 if __name__ == "__main__":
     main() 
