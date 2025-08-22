@@ -7,7 +7,14 @@ PORT=${PORT:-5007}
 
 echo "🔍 Health check for port ${PORT}"
 
-# Try ping endpoint first (faster, no database required)
+# Try root endpoint first (simplest, no database required)
+echo "📡 Testing root endpoint..."
+if curl -f --max-time 10 http://localhost:${PORT}/; then
+    echo "✅ Root endpoint is healthy"
+    exit 0
+fi
+
+# Fallback to ping endpoint
 echo "📡 Testing /ping endpoint..."
 if curl -f --max-time 10 http://localhost:${PORT}/ping; then
     echo "✅ /ping endpoint is healthy"
@@ -18,13 +25,6 @@ fi
 echo "📡 Testing /health endpoint..."
 if curl -f --max-time 15 http://localhost:${PORT}/health; then
     echo "✅ /health endpoint is healthy"
-    exit 0
-fi
-
-# Fallback to root endpoint
-echo "📡 Testing root endpoint..."
-if curl -f --max-time 10 http://localhost:${PORT}/; then
-    echo "✅ Root endpoint is healthy"
     exit 0
 fi
 

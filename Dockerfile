@@ -35,8 +35,8 @@ USER appuser
 # Expose the API port (Railway will set PORT environment variable)
 EXPOSE 5007
 
-# Health check with shorter timeout - uses Railway's PORT environment variable
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=5 \
+# Health check with longer timeout and start period for Railway
+HEALTHCHECK --interval=30s --timeout=15s --start-period=120s --retries=3 \
     CMD ./healthcheck.sh
 
 # Use the production-ready startup script

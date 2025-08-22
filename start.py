@@ -84,8 +84,7 @@ def start_production():
             "--log-level", "debug",  # More verbose logging for debugging
             "--access-logfile", "-",
             "--error-logfile", "-",
-            "--preload",  # Preload app for faster startup
-            "--reload-on-exception"  # Reload on unhandled exceptions
+            "--preload"  # Preload app for faster startup
         ])
     except KeyboardInterrupt:
         print("\n🛑 API server stopped")
