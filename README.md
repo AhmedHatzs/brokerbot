@@ -1,80 +1,215 @@
-# Burdy's Auto Detail Chatbot API
+# 🚗 Burdy's Auto Detail Chatbot API
 
-A backend API for Burdy's Auto Detail chatbot with MySQL database integration and OpenAI assistant support.
+A production-ready backend API for Burdy's Auto Detail chatbot with MySQL database integration and OpenAI assistant support. Built with Flask and optimized for Railway deployment.
 
-## Features
+## ✨ Features
 
-- 🤖 OpenAI Assistant integration
-- 🗄️ MySQL database storage for conversations
-- 🔄 Session management
-- 📊 Health check endpoints
-- 🛡️ Error handling and validation
+- **AI-Powered Chatbot**: OpenAI GPT-3.5-turbo integration for intelligent responses
+- **Conversation History**: Persistent chat sessions with MySQL database
+- **Production Ready**: Optimized for Railway deployment with Docker
+- **Health Monitoring**: Comprehensive health checks and status endpoints
+- **CORS Support**: Cross-origin resource sharing for frontend integration
+- **Error Handling**: Robust error handling and logging
+- **Security**: Non-root Docker container and environment variable protection
 
-## Prerequisites
+## 🚀 Quick Start
 
-- Python 3.8+
+### Prerequisites
+
+- Python 3.10+
 - MySQL database
-- OpenAI API key and Assistant ID
+- OpenAI API key
 
-## Environment Variables
+### Local Development
 
-Create a `.env` file in the project root with the following variables:
+1. **Clone the repository:**
+   ```bash
+   git clone <your-repo-url>
+   cd brokerbot
+   ```
 
-```env
-# OpenAI Configuration (REQUIRED)
+2. **Install dependencies:**
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+3. **Set up environment variables:**
+   Create a `.env` file:
+   ```bash
+   # OpenAI Configuration
+   OPENAI_API_KEY=your_openai_api_key_here
+   
+   # MySQL Database Configuration
+   MYSQL_HOST=localhost
+   MYSQL_PORT=3306
+   MYSQL_DATABASE=burdy_chatbot
+   MYSQL_USER=root
+   MYSQL_PASSWORD=
+   
+   # Development Configuration
+   RAILWAY_ENVIRONMENT=development
+   PORT=5007
+   ```
+
+4. **Start the API:**
+   ```bash
+   python start.py
+   ```
+
+5. **Test the API:**
+   ```bash
+   # Health check
+   curl http://localhost:5007/health
+   
+   # Chat endpoint
+   curl -X POST http://localhost:5007/process_message \
+     -H "Content-Type: application/json" \
+     -d '{"message": "Hello, can you help me with car detailing?", "session_id": "test-session"}'
+   ```
+
+## 🌐 API Endpoints
+
+### Root Endpoint
+- **GET** `/` - Basic connectivity test
+- **Response:** API status and timestamp
+
+### Health Check
+- **GET** `/health` - Comprehensive health status
+- **Response:** Database, OpenAI, and environment status
+
+### Chat Processing
+- **POST** `/process_message` - Process chat messages
+- **Body:** `{"message": "user message", "session_id": "unique-session-id"}`
+- **Response:** AI-generated response with session tracking
+
+### Conversation History
+- **GET** `/conversation/<session_id>` - Get conversation history
+- **Response:** All messages for the specified session
+
+## 🚀 Railway Deployment
+
+### 1. Connect to Railway
+
+1. Go to [Railway Dashboard](https://railway.app/dashboard)
+2. Click "New Project" → "Deploy from GitHub repo"
+3. Connect your GitHub account and select this repository
+
+### 2. Environment Variables
+
+Set these in your Railway project settings:
+
+```bash
+# OpenAI Configuration
 OPENAI_API_KEY=your_openai_api_key_here
 
-# MySQL Database Configuration (REQUIRED)
+# MySQL Database Configuration
 MYSQL_HOST=your_mysql_host
 MYSQL_PORT=3306
 MYSQL_DATABASE=your_database_name
-MYSQL_USER=your_username
-MYSQL_PASSWORD=your_password
+MYSQL_USER=your_database_user
+MYSQL_PASSWORD=your_database_password
 MYSQL_SSL_MODE=REQUIRED
+
+# Railway Configuration
+RAILWAY_ENVIRONMENT=production
+PORT=5007
 ```
 
-## Installation
+### 3. Deploy
 
-1. Install dependencies:
+Railway will automatically:
+- Build your Docker container
+- Set the PORT environment variable
+- Deploy your application
+- Provide a public URL
+
+### 4. Test Deployment
+
 ```bash
-pip install -r requirements.txt
+# Test root endpoint
+curl https://your-app-name.railway.app/
+
+# Test health check
+curl https://your-app-name.railway.app/health
+
+# Test chat functionality
+curl -X POST https://your-app-name.railway.app/process_message \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Hello", "session_id": "test"}'
 ```
 
-2. Set up your environment variables in `.env` file
+## 🔧 Configuration
 
-3. Ensure your MySQL database is running and accessible
+### Environment Variables
 
-## Running the API
+| Variable | Description | Required | Default |
+|----------|-------------|----------|---------|
+| `OPENAI_API_KEY` | OpenAI API key for AI responses | Yes | - |
+| `MYSQL_HOST` | MySQL database host | Yes | localhost |
+| `MYSQL_PORT` | MySQL database port | No | 3306 |
+| `MYSQL_DATABASE` | MySQL database name | Yes | burdy_chatbot |
+| `MYSQL_USER` | MySQL database user | Yes | root |
+| `MYSQL_PASSWORD` | MySQL database password | Yes | - |
+| `MYSQL_SSL_MODE` | MySQL SSL mode | No | REQUIRED |
+| `RAILWAY_ENVIRONMENT` | Environment mode | No | development |
+| `PORT` | Application port | No | 5007 |
+| `HOST` | Application host | No | 0.0.0.0 |
 
-### Development Mode
-```bash
-# Direct Python execution
-python chat_api.py
+### Database Schema
 
-# Using the production-ready launcher script
-python start.py
+The application automatically creates these tables:
+
+```sql
+-- Conversations table
+CREATE TABLE conversations (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    session_id VARCHAR(255) NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+-- Messages table
+CREATE TABLE messages (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    conversation_id INT,
+    role ENUM('user', 'assistant') NOT NULL,
+    content TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (conversation_id) REFERENCES conversations(id)
+);
 ```
 
-### Production Mode (Railway)
-```bash
-# Use the Railway-friendly startup script
-python start.py
+## 🏗️ Architecture
+
+### File Structure
+
+```
+brokerbot/
+├── chat_api.py          # Main Flask application
+├── start.py             # Production/development startup script
+├── requirements.txt     # Python dependencies
+├── Dockerfile          # Production Docker configuration
+├── railway.toml        # Railway deployment configuration
+├── healthcheck.sh      # Health check script
+├── .dockerignore       # Docker ignore file
+└── README.md           # This file
 ```
 
-The API will start on `http://localhost:5001` (development) or the Railway-assigned port (production)
+### Key Components
 
-## API Endpoints
+- **Flask Application** (`chat_api.py`): Main API with endpoints and business logic
+- **Startup Script** (`start.py`): Handles development vs production modes
+- **Docker Configuration**: Production-ready container setup
+- **Railway Configuration**: Optimized for Railway deployment
 
-### 1. Health Check
-**Endpoint:** `GET /health`
+## 🔍 Monitoring & Health Checks
 
-**Description:** Returns comprehensive API status including database and OpenAI connectivity.
+### Health Endpoint Response
 
-**Response:**
 ```json
 {
   "status": "API is running",
-  "timestamp": "2025-01-22T17:35:07.123456",
+  "timestamp": "2025-01-22T13:15:09.123456",
   "environment": "production",
   "database": "healthy",
   "openai": "healthy",
@@ -82,317 +217,118 @@ The API will start on `http://localhost:5001` (development) or the Railway-assig
 }
 ```
 
-**Status Codes:**
-- `200` - API is healthy
-- `500` - Health check failed
+### Railway Health Checks
 
----
+- **Path:** `/health`
+- **Timeout:** 10 seconds
+- **Interval:** 30 seconds
+- **Retries:** 5 attempts
 
-### 2. Process Message
-**Endpoint:** `POST /process_message`
+## 🛠️ Development
 
-**Description:** Processes a user message through OpenAI and stores the conversation in MySQL.
+### Running Tests
 
-**Request Body:**
-```json
-{
-  "message": "Hello, I need information about your auto detailing services",
-  "session_id": "user_session_123"
-}
-```
-
-**Parameters:**
-- `message` (required): The user's message text
-- `session_id` (optional): Unique session identifier for conversation tracking
-
-**Response:**
-```json
-{
-  "response": "Hello! I'd be happy to help you with our auto detailing services. We offer a range of services including...",
-  "session_id": "user_session_123",
-  "timestamp": "2025-01-22T17:35:07.123456"
-}
-```
-
-**Status Codes:**
-- `200` - Message processed successfully
-- `400` - Missing or invalid message
-- `500` - Server error (OpenAI or database issue)
-
----
-
-### 3. Get Conversation History
-**Endpoint:** `GET /conversation/{session_id}`
-
-**Description:** Retrieves the complete conversation history for a specific session.
-
-**URL Parameters:**
-- `session_id` (required): The session identifier
-
-**Response:**
-```json
-{
-  "session_id": "user_session_123",
-  "messages": [
-    {
-      "role": "user",
-      "content": "Hello, I need information about your auto detailing services",
-      "created_at": "2025-01-22T17:30:00.000000"
-    },
-    {
-      "role": "assistant", 
-      "content": "Hello! I'd be happy to help you with our auto detailing services...",
-      "created_at": "2025-01-22T17:30:05.000000"
-    }
-  ]
-}
-```
-
-**Status Codes:**
-- `200` - Conversation history retrieved successfully
-- `500` - Server error (database issue)
-
-## API Usage Examples
-
-### JavaScript/Fetch Examples
-
-#### 1. Health Check
-```javascript
-const checkHealth = async () => {
-  try {
-    const response = await fetch('https://your-api.railway.app/health');
-    const data = await response.json();
-    console.log('API Status:', data);
-  } catch (error) {
-    console.error('Health check failed:', error);
-  }
-};
-```
-
-#### 2. Send a Message
-```javascript
-const sendMessage = async (message, sessionId = 'default_session') => {
-  try {
-    const response = await fetch('https://your-api.railway.app/process_message', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        message: message,
-        session_id: sessionId
-      })
-    });
-    
-    const data = await response.json();
-    return data.response;
-  } catch (error) {
-    console.error('Failed to send message:', error);
-    throw error;
-  }
-};
-
-// Usage
-sendMessage('Hello, I need car detailing services', 'user_123')
-  .then(response => console.log('Bot response:', response));
-```
-
-#### 3. Get Conversation History
-```javascript
-const getConversationHistory = async (sessionId) => {
-  try {
-    const response = await fetch(`https://your-api.railway.app/conversation/${sessionId}`);
-    const data = await response.json();
-    return data.messages;
-  } catch (error) {
-    console.error('Failed to get conversation:', error);
-    throw error;
-  }
-};
-```
-
-### cURL Examples
-
-#### Local Testing
 ```bash
-# Health Check
-curl -X GET "http://localhost:5001/health"
+# Test health endpoint
+curl http://localhost:5007/health
 
-# Send a Message
-curl -X POST "http://localhost:5001/process_message" \
+# Test chat functionality
+curl -X POST http://localhost:5007/process_message \
   -H "Content-Type: application/json" \
-  -d '{
-    "message": "Hello, I need auto detailing services",
-    "session_id": "test_session"
-  }'
-
-# Get Conversation History
-curl -X GET "http://localhost:5001/conversation/test_session"
+  -d '{"message": "Test message", "session_id": "test"}'
 ```
 
-#### Railway Production Testing
-```bash
-# Replace with your actual Railway URL
-RAILWAY_URL="https://your-app-name.railway.app"
+### Development Mode
 
-# Health Check
-curl -X GET "${RAILWAY_URL}/health"
+The application automatically detects development mode and:
+- Uses Flask's built-in development server
+- Enables debug mode
+- Allows all CORS origins
+- Uses local MySQL configuration
 
-# Send a Message
-curl -X POST "${RAILWAY_URL}/process_message" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "message": "What are your pricing options for full detail?",
-    "session_id": "customer_456"
-  }'
+### Production Mode
 
-# Get Conversation History
-curl -X GET "${RAILWAY_URL}/conversation/customer_456"
-```
+Production mode (Railway) uses:
+- Gunicorn WSGI server
+- Single worker configuration
+- Railway-optimized settings
+- Production CORS configuration
 
-### Python Examples
+## 🔒 Security Features
 
-#### Using requests library
-```python
-import requests
-import json
+- **Non-root Docker container** for enhanced security
+- **Environment variable protection** for sensitive data
+- **CORS configuration** for production environments
+- **Input validation** and error handling
+- **Database connection timeouts** to prevent hanging
 
-# API base URL
-API_BASE = "https://your-api.railway.app"
+## 📊 Performance Optimizations
 
-# Health check
-def check_health():
-    response = requests.get(f"{API_BASE}/health")
-    return response.json()
+- **Single gunicorn worker** for Railway resource constraints
+- **Database connection pooling** for efficient MySQL connections
+- **Conversation history limiting** (last 10 messages for context)
+- **Railway-optimized timeouts** and health checks
+- **Preloaded application** for faster startup
 
-# Send message
-def send_message(message, session_id="default"):
-    data = {
-        "message": message,
-        "session_id": session_id
-    }
-    response = requests.post(
-        f"{API_BASE}/process_message",
-        headers={"Content-Type": "application/json"},
-        data=json.dumps(data)
-    )
-    return response.json()
+## 🚨 Troubleshooting
 
-# Get conversation history
-def get_conversation(session_id):
-    response = requests.get(f"{API_BASE}/conversation/{session_id}")
-    return response.json()
+### Common Issues
 
-# Usage example
-if __name__ == "__main__":
-    # Check API health
-    health = check_health()
-    print("API Health:", health)
-    
-    # Send a message
-    response = send_message("Hello, I need car detailing services", "user_789")
-    print("Bot Response:", response['response'])
-    
-    # Get conversation history
-    history = get_conversation("user_789")
-    print("Conversation History:", history)
-```
+1. **Database Connection Errors**
+   - Verify MySQL credentials and host
+   - Check SSL mode configuration
+   - Ensure database is accessible
 
-### Testing Scripts
-Run the provided test scripts:
-```bash
-# Local testing
-./test_api.sh
-
-# Railway testing (edit URL first)
-./test_railway.sh
-```
-
-## Database Schema
-
-The API automatically creates the following tables:
-
-### conversations
-- `id` (Primary Key)
-- `session_id` (VARCHAR)
-- `created_at` (TIMESTAMP)
-- `updated_at` (TIMESTAMP)
-
-### messages
-- `id` (Primary Key)
-- `conversation_id` (Foreign Key)
-- `role` (ENUM: 'user', 'assistant')
-- `content` (TEXT)
-- `created_at` (TIMESTAMP)
-
-## Error Handling
-
-The API includes comprehensive error handling for:
-- Missing environment variables
-- Database connection failures
-- OpenAI API errors
-- Invalid input validation
-- Network timeouts
-
-## Development
-
-- The API runs in debug mode by default
-- CORS is enabled for cross-origin requests
-- All database operations include proper error handling
-- OpenAI integration includes retry logic and status checking
-
-## Railway Deployment
-
-### Environment Variables
-Set these in your Railway project environment:
-
-```env
-# OpenAI Configuration
-OPENAI_API_KEY=your_openai_api_key
-
-# MySQL Database Configuration
-MYSQL_HOST=your_mysql_host
-MYSQL_PORT=3306
-MYSQL_DATABASE=your_database_name
-MYSQL_USER=your_username
-MYSQL_PASSWORD=your_password
-MYSQL_SSL_MODE=REQUIRED
-
-# Railway Environment (Optional)
-RAILWAY_ENVIRONMENT=production
-PORT=5001
-HOST=0.0.0.0
-FLASK_DEBUG=False
-```
-
-### Deployment Steps
-1. Connect your GitHub repository to Railway
-2. Set environment variables in Railway dashboard
-3. Deploy - Railway will automatically use the Dockerfile
-4. Test with the provided curl commands
-
-### Railway-Specific Features
-- Automatic port detection via `PORT` environment variable
-- Production-optimized uvicorn settings
-- Health check endpoint for monitoring
-- CORS enabled for cross-origin requests
-
-## Troubleshooting
-
-1. **Database Connection Issues:**
-   - Verify MySQL is running
-   - Check environment variables
-   - Ensure SSL mode is correct
-
-2. **OpenAI Issues:**
+2. **OpenAI API Errors**
    - Verify API key is valid
-   - Check Assistant ID exists
-   - Ensure sufficient API credits
+   - Check API quota and permissions
+   - Ensure API key has sufficient credits
 
-3. **Port Conflicts:**
-   - Change port in `chat_api.py` if 5001 is in use
+3. **Port Configuration**
+   - Application uses port 5007 by default
+   - Railway automatically sets PORT environment variable
+   - Health checks use Railway's PORT
 
-4. **Railway Deployment Issues:**
-   - Check Railway logs for error messages
+4. **Deployment Issues**
+   - Check Railway build logs
    - Verify all environment variables are set
-   - Ensure MySQL database is accessible from Railway 
+   - Test endpoints individually
+
+### Logs and Debugging
+
+- **Railway logs:** `railway logs`
+- **Application logs:** Check Railway dashboard
+- **Health endpoint:** Provides detailed status information
+
+## 📈 Scaling Considerations
+
+- Monitor Railway usage and billing
+- Consider upgrading Railway plan for higher traffic
+- Optimize database queries for performance
+- Review OpenAI API usage and costs
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Test thoroughly
+5. Submit a pull request
+
+## 📄 License
+
+This project is licensed under the MIT License.
+
+## 📞 Support
+
+For issues and questions:
+1. Check the troubleshooting section
+2. Review Railway documentation
+3. Test endpoints individually
+4. Verify environment configuration
+
+---
+
+**Last Updated:** August 22, 2025  
+**Version:** 1.0.0  
+**Status:** Production Ready ✅ 

@@ -41,15 +41,32 @@ def get_mysql_config():
     is_production = os.getenv('RAILWAY_ENVIRONMENT') == 'production'
     
     if is_production:
-        # Production configuration (Railway)
-        return {
+        # Production configuration (Railway with Aiven Cloud MySQL)
+        config = {
             'host': os.getenv('MYSQL_HOST'),
             'port': int(os.getenv('MYSQL_PORT', 3306)),
             'database': os.getenv('MYSQL_DATABASE'),
             'user': os.getenv('MYSQL_USER'),
             'password': os.getenv('MYSQL_PASSWORD'),
-            'ssl_disabled': os.getenv('MYSQL_SSL_MODE', 'REQUIRED') != 'REQUIRED'
+            'connect_timeout': 30,  # Increased timeout for cloud connections
+            'autocommit': True,
+            'charset': 'utf8mb4',
+            'collation': 'utf8mb4_unicode_ci'
         }
+        
+        # Handle SSL configuration for Aiven Cloud
+        ssl_mode = os.getenv('MYSQL_SSL_MODE', 'REQUIRED')
+        if ssl_mode == 'REQUIRED':
+            config['ssl_ca'] = None  # Use system CA certificates
+            config['ssl_verify_cert'] = True
+        elif ssl_mode == 'DISABLED':
+            config['ssl_disabled'] = True
+        else:
+            # Default to SSL enabled
+            config['ssl_ca'] = None
+            config['ssl_verify_cert'] = True
+            
+        return config
     else:
         # Development configuration (Local MySQL)
         return {
@@ -58,7 +75,9 @@ def get_mysql_config():
             'database': 'burdy_chatbot',
             'user': 'root',
             'password': '',
-            'ssl_disabled': True
+            'ssl_disabled': True,
+            'connect_timeout': 10,
+            'autocommit': True
         }
 
 MYSQL_CONFIG = get_mysql_config()
@@ -66,12 +85,7 @@ MYSQL_CONFIG = get_mysql_config()
 def get_mysql_connection():
     """Create and return MySQL connection with production-ready error handling"""
     try:
-        # Add connection timeout to prevent hanging
-        config_with_timeout = MYSQL_CONFIG.copy()
-        config_with_timeout['connect_timeout'] = 5  # 5 second timeout
-        config_with_timeout['autocommit'] = True
-        
-        connection = mysql.connector.connect(**config_with_timeout)
+        connection = mysql.connector.connect(**MYSQL_CONFIG)
         return connection
     except Error as e:
         print(f"Error connecting to MySQL: {e}")
@@ -134,8 +148,10 @@ def init_db_background():
             print("✅ Database initialized successfully")
         else:
             print("⚠️  Database initialization failed - API will continue without database")
+            print("💡 Check your MySQL environment variables and connection settings")
     except Exception as e:
         print(f"⚠️  Database initialization error: {e} - API will continue without database")
+        print("💡 This might be due to network issues, SSL configuration, or missing environment variables")
 
 # Start database initialization in background thread
 db_thread = threading.Thread(target=init_db_background, daemon=True)
@@ -308,6 +324,41 @@ def health():
     except Exception as e:
         print(f"Health check error: {e}")
         return jsonify({'error': 'Health check failed'}), 500
+
+@app.route('/test-db', methods=['GET'])
+def test_database():
+    """Test database connection endpoint for debugging Railway deployment"""
+    try:
+        # Import the test function
+        from railway_db_test import test_mysql_connection, get_railway_info
+        
+        # Capture output
+        import io
+        import sys
+        
+        # Redirect stdout to capture output
+        old_stdout = sys.stdout
+        sys.stdout = io.StringIO()
+        
+        try:
+            get_railway_info()
+            success = test_mysql_connection()
+            output = sys.stdout.getvalue()
+        finally:
+            sys.stdout = old_stdout
+        
+        return jsonify({
+            'success': success,
+            'output': output,
+            'timestamp': datetime.now().isoformat()
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'timestamp': datetime.now().isoformat()
+        }), 500
 
 @app.route('/conversation/<session_id>', methods=['GET'])
 def get_conversation(session_id):
