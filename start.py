@@ -16,6 +16,7 @@ def check_environment():
     """Check if all required environment variables are set"""
     required_vars = [
         'OPENAI_API_KEY',
+        'OPENAI_ASSISTANT_ID',
         'MYSQL_HOST',
         'MYSQL_PORT',
         'MYSQL_DATABASE',
@@ -66,6 +67,7 @@ def start_production():
     print(f"🌐 Server will run on {host}:{port}")
     print(f"🔧 Environment: {os.getenv('RAILWAY_ENVIRONMENT', 'unknown')}")
     print(f"🔑 OpenAI API Key: {'✅ Set' if os.getenv('OPENAI_API_KEY') else '❌ Missing'}")
+    print(f"🤖 OpenAI Assistant ID: {'✅ Set' if os.getenv('OPENAI_ASSISTANT_ID') else '❌ Missing'}")
     print(f"🗄️  MySQL Host: {os.getenv('MYSQL_HOST', 'Not set')}")
     
     try:

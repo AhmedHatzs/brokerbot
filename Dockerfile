@@ -25,8 +25,6 @@ RUN pip install --no-cache-dir --upgrade pip && \
 # Copy application code
 COPY . /app/
 
-# Make healthcheck script executable
-RUN chmod +x /app/healthcheck.sh
 
 # Create non-root user for security
 RUN adduser --disabled-password --gecos '' appuser && chown -R appuser:appuser /app
@@ -40,4 +38,4 @@ HEALTHCHECK --interval=30s --timeout=15s --start-period=120s --retries=3 \
     CMD ./healthcheck.sh
 
 # Use the production-ready startup script
-CMD ["python", "start.py"] 
+CMD ["uvicorn", "start:app", "--host", "0.0.0.0"] 

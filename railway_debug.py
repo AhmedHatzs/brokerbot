@@ -19,6 +19,7 @@ def check_environment_variables():
     
     required_vars = [
         'OPENAI_API_KEY',
+        'OPENAI_ASSISTANT_ID',
         'MYSQL_HOST',
         'MYSQL_PORT',
         'MYSQL_DATABASE',

@@ -38,6 +38,7 @@ A production-ready backend API for Burdy's Auto Detail chatbot with MySQL databa
    ```bash
    # OpenAI Configuration
    OPENAI_API_KEY=your_openai_api_key_here
+   OPENAI_ASSISTANT_ID=your_openai_assistant_id_here
    
    # MySQL Database Configuration
    MYSQL_HOST=localhost
@@ -101,6 +102,7 @@ Set these in your Railway project settings:
 ```bash
 # OpenAI Configuration
 OPENAI_API_KEY=your_openai_api_key_here
+OPENAI_ASSISTANT_ID=your_openai_assistant_id_here
 
 # MySQL Database Configuration
 MYSQL_HOST=your_mysql_host
@@ -145,6 +147,7 @@ curl -X POST https://your-app-name.railway.app/process_message \
 | Variable | Description | Required | Default |
 |----------|-------------|----------|---------|
 | `OPENAI_API_KEY` | OpenAI API key for AI responses | Yes | - |
+| `OPENAI_ASSISTANT_ID` | OpenAI Assistant ID for conversations | Yes | - |
 | `MYSQL_HOST` | MySQL database host | Yes | localhost |
 | `MYSQL_PORT` | MySQL database port | No | 3306 |
 | `MYSQL_DATABASE` | MySQL database name | Yes | burdy_chatbot |

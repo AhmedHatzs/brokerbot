@@ -2,11 +2,8 @@
 builder = "dockerfile"
 
 [deploy]
-startCommand = "python start.py"
-healthcheckPath = "/health"
-healthcheckTimeout = 10
-restartPolicyType = "on_failure"
-restartPolicyMaxRetries = 3
+startCommand = "uvicorn start:app --host 0.0.0.0"
+
 
 [env]
 RAILWAY_ENVIRONMENT = "production" 

@@ -37,6 +37,7 @@ Make sure these are set in Railway dashboard:
 RAILWAY_ENVIRONMENT=production
 PORT=5007
 OPENAI_API_KEY=your_openai_key
+OPENAI_ASSISTANT_ID=your_openai_assistant_id
 MYSQL_HOST=your_mysql_host
 MYSQL_PORT=your_mysql_port
 MYSQL_DATABASE=your_database
