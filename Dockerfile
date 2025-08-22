@@ -37,5 +37,5 @@ EXPOSE 5007
 HEALTHCHECK --interval=30s --timeout=15s --start-period=120s --retries=3 \
     CMD ./healthcheck.sh
 
-# Use the production-ready startup script
-CMD ["uvicorn", "start:app", "--host", "0.0.0.0"] 
+# Use gunicorn for production deployment
+CMD ["gunicorn", "chat_api:app", "--bind", "0.0.0.0:5007", "--workers", "1", "--worker-class", "sync", "--timeout", "60", "--keep-alive", "2", "--log-level", "debug", "--access-logfile", "-", "--error-logfile", "-"] 
