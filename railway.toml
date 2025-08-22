@@ -2,7 +2,7 @@
 builder = "dockerfile"
 
 [deploy]
-startCommand = "gunicorn chat_api:app --bind 0.0.0.0:$PORT --workers 1 --worker-class sync --timeout 60 --keep-alive 2 --log-level debug --access-logfile - --error-logfile -"
+startCommand = "./start_railway.sh"
 
 
 [env]
