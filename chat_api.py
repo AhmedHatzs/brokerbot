@@ -34,7 +34,10 @@ else:
 
 # OpenAI Configuration
 from openai import OpenAI
-client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+client = OpenAI(
+    api_key=os.getenv('OPENAI_API_KEY'),
+    default_headers={"OpenAI-Beta": "assistants=v2"}
+)
 assistant_id = os.getenv('OPENAI_ASSISTANT_ID')
 
 # MySQL Configuration
@@ -579,6 +582,8 @@ def delete_thread(thread_id):
     except Error as e:
         print(f"Error deleting thread: {e}")
         return jsonify({'error': 'Failed to delete thread'}), 500
+
+
 
 # This module is designed to be imported by start.py
 # The Flask app will be started by the startup script 
