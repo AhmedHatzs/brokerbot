@@ -2,7 +2,7 @@
 builder = "dockerfile"
 
 [deploy]
-startCommand = "./start_railway.sh"
+startCommand = "python start.py"
 
 
 [env]

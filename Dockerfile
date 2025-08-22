@@ -37,5 +37,5 @@ EXPOSE 5007
 HEALTHCHECK --interval=30s --timeout=15s --start-period=120s --retries=3 \
     CMD ./healthcheck.sh
 
-# Use the Railway startup script
-CMD ["./start_railway.sh"] 
+# Use the Python startup script
+CMD ["python", "start.py"] 
