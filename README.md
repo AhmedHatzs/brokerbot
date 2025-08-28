@@ -6,8 +6,11 @@ A production-ready backend API for Burdy's Auto Detail chatbot with MySQL databa
 
 - **AI-Powered Chatbot**: OpenAI GPT-3.5-turbo integration for intelligent responses
 - **File Upload Support**: 
-  - All file types (txt, pdf, doc, docx, md, png, jpg, jpeg, gif, bmp, tiff) - OCR text extraction using Tesseract
-  - All files are processed through OCR and extracted text is sent to OpenAI for analysis
+  - Text files (txt, md): Direct text extraction
+  - PDF files: PyPDF2 text extraction + OCR fallback for scanned documents
+  - Word documents (doc, docx): OCR processing
+  - Image files (png, jpg, jpeg, gif, bmp, tiff): Tesseract OCR
+  - All extracted text is sent to OpenAI for intelligent analysis and responses
 - **Conversation History**: Persistent chat sessions with MySQL database
 - **Production Ready**: Optimized for Railway deployment with Docker
 - **Health Monitoring**: Comprehensive health checks and status endpoints

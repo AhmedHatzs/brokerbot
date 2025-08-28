@@ -8,13 +8,14 @@ ENV PYTHONPATH=/app
 
 WORKDIR /app
 
-# Install system dependencies including Tesseract OCR
+# Install system dependencies including Tesseract OCR and PDF tools
 RUN apt-get update && apt-get install -y \
     gcc \
     curl \
     tesseract-ocr \
     tesseract-ocr-eng \
     libtesseract-dev \
+    poppler-utils \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
 

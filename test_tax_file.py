@@ -25,7 +25,7 @@ def test_tax_file_ocr():
     try:
         # Test OCR extraction using our function
         with open(tax_file_path, 'rb') as file_obj:
-            extracted_text = extract_text_from_file(file_obj)
+            extracted_text = extract_text_from_file(file_obj, tax_file_path)
         
         if extracted_text and extracted_text.strip():
             print(f"✅ OCR extraction successful!")

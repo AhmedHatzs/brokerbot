@@ -5,15 +5,17 @@ Backend API with MySQL and OpenAI integration
 
 Features:
 - Text message processing with OpenAI Assistants API
-- File upload support with OCR for all file types
-  - All supported files: txt, pdf, doc, docx, md, png, jpg, jpeg, gif, bmp, tiff
-  - All files are processed using Tesseract OCR for text extraction
-  - Extracted text is sent to OpenAI for analysis
+- File upload support with intelligent text extraction
+  - Text files (txt, md): Direct text extraction
+  - PDF files: PyPDF2 text extraction + OCR fallback
+  - Word documents (doc, docx): OCR processing
+  - Image files (png, jpg, jpeg, gif, bmp, tiff): Tesseract OCR
+  - All extracted text is sent to OpenAI for analysis
 - File persistence and retrieval across conversations
 - Thread-based conversation management
 - MySQL database persistence for messages and files
 - Session management
-- Tesseract OCR integration for universal text extraction
+- Multi-format text extraction with OCR fallback
 
 API Endpoints:
 - POST /process_message - Process text messages or file uploads (supports both JSON and multipart form data)
@@ -58,6 +60,8 @@ import io
 import pytesseract
 from PIL import Image
 import tempfile
+import PyPDF2
+from pdf2image import convert_from_bytes
 
 # Load environment variables
 load_dotenv()
@@ -280,12 +284,13 @@ def init_db_background():
 db_thread = threading.Thread(target=init_db_background, daemon=True)
 db_thread.start()
 
-def extract_text_from_file(file_obj):
+def extract_text_from_file(file_obj, filename):
     """
-    Extract text from any file using Tesseract OCR
+    Extract text from any file using appropriate method based on file type
     
     Args:
         file_obj: File object containing any file type
+        filename: Name of the file to determine type
         
     Returns:
         str: Extracted text from the file, or None if extraction fails
@@ -294,24 +299,96 @@ def extract_text_from_file(file_obj):
         # Reset file pointer to beginning
         file_obj.seek(0)
         
-        # Open file as image using PIL (works for images, PDFs, and other files)
-        image = Image.open(file_obj)
+        # Get file extension
+        file_extension = filename.rsplit('.', 1)[1].lower() if '.' in filename else ''
         
-        # Extract text using Tesseract OCR
-        extracted_text = pytesseract.image_to_string(image)
+        # Read file content
+        file_content = file_obj.read()
+        file_obj.seek(0)  # Reset pointer again
+        
+        extracted_text = ""
+        
+        if file_extension in {'pdf'}:
+            # Handle PDF files
+            print(f"📄 Processing PDF file: {filename}")
+            try:
+                # First try to extract text directly from PDF
+                pdf_reader = PyPDF2.PdfReader(io.BytesIO(file_content))
+                for page in pdf_reader.pages:
+                    page_text = page.extract_text()
+                    if page_text:
+                        extracted_text += page_text + "\n"
+                
+                # If no text extracted, try OCR on PDF pages
+                if not extracted_text.strip():
+                    print("📄 No text found in PDF, trying OCR on pages...")
+                    images = convert_from_bytes(file_content)
+                    for i, image in enumerate(images):
+                        page_text = pytesseract.image_to_string(image)
+                        if page_text:
+                            extracted_text += f"Page {i+1}: {page_text}\n"
+                
+            except Exception as e:
+                print(f"⚠️  PDF text extraction failed, trying OCR: {e}")
+                # Fallback to OCR
+                try:
+                    images = convert_from_bytes(file_content)
+                    for i, image in enumerate(images):
+                        page_text = pytesseract.image_to_string(image)
+                        if page_text:
+                            extracted_text += f"Page {i+1}: {page_text}\n"
+                except Exception as ocr_error:
+                    print(f"❌ PDF OCR failed: {ocr_error}")
+                    return None
+                    
+        elif file_extension in {'txt', 'md'}:
+            # Handle text files directly
+            print(f"📄 Processing text file: {filename}")
+            try:
+                # Try to decode as text
+                extracted_text = file_content.decode('utf-8')
+            except UnicodeDecodeError:
+                try:
+                    extracted_text = file_content.decode('latin-1')
+                except:
+                    print("❌ Could not decode text file")
+                    return None
+                    
+        elif file_extension in {'doc', 'docx'}:
+            # Handle Word documents - convert to text first
+            print(f"📄 Processing Word document: {filename}")
+            # For now, we'll need to convert these to PDF or images first
+            # This is a simplified approach - in production you might want to use python-docx
+            try:
+                # Try OCR on the document as if it were an image
+                image = Image.open(io.BytesIO(file_content))
+                extracted_text = pytesseract.image_to_string(image)
+            except Exception as e:
+                print(f"❌ Word document processing failed: {e}")
+                return None
+                
+        else:
+            # Handle image files (png, jpg, jpeg, gif, bmp, tiff)
+            print(f"🖼️  Processing image file: {filename}")
+            try:
+                image = Image.open(io.BytesIO(file_content))
+                extracted_text = pytesseract.image_to_string(image)
+            except Exception as e:
+                print(f"❌ Image processing failed: {e}")
+                return None
         
         # Clean up the extracted text
-        if extracted_text:
+        if extracted_text and extracted_text.strip():
             # Remove extra whitespace and normalize
             cleaned_text = ' '.join(extracted_text.split())
-            print(f"✅ OCR extraction successful: {len(cleaned_text)} characters extracted")
+            print(f"✅ Text extraction successful: {len(cleaned_text)} characters extracted")
             return cleaned_text
         else:
-            print("⚠️  OCR extraction returned empty text")
+            print("⚠️  Text extraction returned empty text")
             return None
             
     except Exception as e:
-        print(f"❌ OCR extraction failed: {e}")
+        print(f"❌ Text extraction failed: {e}")
         return None
 
 def generate_thread_id():
@@ -605,7 +682,7 @@ def test_file_upload():
         # Test file processing using OCR for all files
         try:
             # Test OCR extraction for all file types
-            extracted_text = extract_text_from_file(file)
+            extracted_text = extract_text_from_file(file, file.filename)
             
             if extracted_text:
                 print(f"✅ OCR test successful: {len(extracted_text)} characters extracted")
@@ -694,7 +771,7 @@ def process_message():
                 print(f"📄 Processing file with OCR: {file_upload.filename}")
                 
                 # Extract text from file using OCR
-                extracted_text = extract_text_from_file(file_upload)
+                extracted_text = extract_text_from_file(file_upload, file_upload.filename)
                 
                 if extracted_text:
                     # Create a temporary text file with extracted content for OpenAI

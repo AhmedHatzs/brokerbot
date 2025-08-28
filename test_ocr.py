@@ -49,7 +49,7 @@ def test_ocr_extraction():
         
         # Test OCR extraction using our function
         with open(test_image_path, 'rb') as file_obj:
-            extracted_text = extract_text_from_file(file_obj)
+            extracted_text = extract_text_from_file(file_obj, test_image_path)
         
         # Clean up
         if os.path.exists(test_image_path):
