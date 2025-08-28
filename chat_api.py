@@ -18,7 +18,9 @@ Features:
 - Multi-format text extraction with OCR fallback
 
 API Endpoints:
-- POST /process_message - Process text messages or file uploads (supports both JSON and multipart form data)
+- POST /process_message - Process text messages, file uploads, or file URLs (supports both JSON and multipart form data)
+- POST /test-file-upload - Test file upload functionality
+- POST /test-url-download - Test URL file download functionality
 - GET /files/<file_id> - Get file information
 - DELETE /files/<file_id> - Delete files from OpenAI
 - GET /conversation/<thread_id> - Get conversation history with files
@@ -34,7 +36,8 @@ JSON Format:
 {
     "message": "Optional text message",
     "session_id": "User session ID",
-    "thread_id": "Optional thread ID for continuing conversation"
+    "thread_id": "Optional thread ID for continuing conversation",
+    "fileUrl": "Optional URL to a file to download and process"
 }
 
 Multipart Form Data:
@@ -42,8 +45,9 @@ Multipart Form Data:
 - session_id: "User session ID"
 - thread_id: "Optional thread ID for continuing conversation"
 - fileUpload: "File to upload and process"
+- fileUrl: "URL to a file to download and process"
 
-Note: Either message or fileUpload must be provided, but both are optional.
+Note: Either message, fileUpload, or fileUrl must be provided, but all are optional.
 """
 
 import os
@@ -62,6 +66,8 @@ from PIL import Image
 import tempfile
 import PyPDF2
 from pdf2image import convert_from_bytes
+import requests
+from urllib.parse import urlparse
 
 # Load environment variables
 load_dotenv()
@@ -846,11 +852,15 @@ def process_message():
             session_id = request.form.get('session_id', 'default_session')
             thread_id = request.form.get('thread_id')
             file_upload = request.files.get('fileUpload')  # File object
+            file_url = request.form.get('fileUrl')  # URL to file
             
             print(f"📋 [PROCESS_MESSAGE] Multipart data - message: {message}, session_id: {session_id}, thread_id: {thread_id}")
             print(f"📋 [PROCESS_MESSAGE] File upload present: {file_upload is not None}")
+            print(f"📋 [PROCESS_MESSAGE] File URL present: {file_url is not None}")
             if file_upload:
                 print(f"📋 [PROCESS_MESSAGE] File details - name: {file_upload.filename}, content_type: {file_upload.content_type}")
+            if file_url:
+                print(f"📋 [PROCESS_MESSAGE] File URL: {file_url}")
         else:
             print("📋 [PROCESS_MESSAGE] Processing JSON payload")
             # Handle JSON payload
@@ -859,14 +869,48 @@ def process_message():
             session_id = data.get('session_id', 'default_session')
             thread_id = data.get('thread_id')
             file_upload = None
+            file_url = data.get('fileUrl')  # URL to file
             
             print(f"📋 [PROCESS_MESSAGE] JSON data - message: {message}, session_id: {session_id}, thread_id: {thread_id}")
+            print(f"📋 [PROCESS_MESSAGE] File URL present: {file_url is not None}")
+            if file_url:
+                print(f"📋 [PROCESS_MESSAGE] File URL: {file_url}")
         
-        # Validate that either message or fileUpload is provided
+        # Handle file URL if provided
+        if file_url and is_valid_url(file_url):
+            print(f"🌐 [PROCESS_MESSAGE] Processing file URL: {file_url}")
+            downloaded_file, downloaded_filename, content_type = download_file_from_url(file_url)
+            if downloaded_file:
+                # Create a file-like object that mimics Flask's file upload
+                class DownloadedFile:
+                    def __init__(self, file_obj, filename, content_type):
+                        self.file = file_obj
+                        self.filename = filename
+                        self.content_type = content_type
+                        self.file.seek(0, 2)  # Seek to end to get size
+                        self.size = self.file.tell()
+                        self.file.seek(0)  # Reset to beginning
+                    
+                    def seek(self, offset, whence=0):
+                        return self.file.seek(offset, whence)
+                    
+                    def tell(self):
+                        return self.file.tell()
+                    
+                    def read(self, size=None):
+                        return self.file.read(size)
+                
+                file_upload = DownloadedFile(downloaded_file, downloaded_filename, content_type)
+                print(f"✅ [PROCESS_MESSAGE] File downloaded from URL: {downloaded_filename}")
+            else:
+                print(f"❌ [PROCESS_MESSAGE] Failed to download file from URL: {file_url}")
+                return jsonify({'error': f'Failed to download file from URL: {file_url}'}), 400
+        
+        # Validate that either message, fileUpload, or fileUrl is provided
         print(f"🔍 [PROCESS_MESSAGE] Validation - message present: {bool(message)}, file_upload present: {bool(file_upload)}")
         if not message and not file_upload:
-            print("❌ [PROCESS_MESSAGE] Validation failed: Neither message nor fileUpload provided")
-            return jsonify({'error': 'Either message or fileUpload is required'}), 400
+            print("❌ [PROCESS_MESSAGE] Validation failed: Neither message nor fileUpload/fileUrl provided")
+            return jsonify({'error': 'Either message, fileUpload, or fileUrl is required'}), 400
         
         print("✅ [PROCESS_MESSAGE] Request validation passed")
         
@@ -1343,7 +1387,149 @@ def delete_thread(thread_id):
         print(f"Error deleting thread: {e}")
         return jsonify({'error': 'Failed to delete thread'}), 500
 
+@app.route('/test-url-download', methods=['POST'])
+def test_url_download():
+    """Test endpoint for URL file download functionality"""
+    try:
+        data = request.json
+        if not data or 'url' not in data:
+            return jsonify({'error': 'URL is required in JSON body'}), 400
+        
+        url = data['url']
+        print(f"🌐 [TEST_URL_DOWNLOAD] Testing URL download: {url}")
+        
+        if not is_valid_url(url):
+            return jsonify({'error': 'Invalid URL format'}), 400
+        
+        # Download the file
+        downloaded_file, filename, content_type = download_file_from_url(url)
+        
+        if not downloaded_file:
+            return jsonify({
+                'success': False,
+                'error': 'Failed to download file from URL',
+                'url': url
+            }), 400
+        
+        # Test file processing
+        try:
+            extracted_text = extract_text_from_file(downloaded_file, filename)
+            
+            if extracted_text:
+                print(f"✅ [TEST_URL_DOWNLOAD] Text extraction successful: {len(extracted_text)} characters")
+            else:
+                return jsonify({
+                    'success': False,
+                    'error': 'Text extraction failed for downloaded file',
+                    'url': url,
+                    'filename': filename,
+                    'content_type': content_type
+                }), 500
+            
+            return jsonify({
+                'success': True,
+                'message': 'URL file download and processing test successful',
+                'url': url,
+                'filename': filename,
+                'content_type': content_type,
+                'extracted_text_length': len(extracted_text),
+                'timestamp': datetime.now().isoformat()
+            }), 200
+            
+        except Exception as e:
+            return jsonify({
+                'success': False,
+                'error': f'File processing test failed: {str(e)}',
+                'url': url,
+                'filename': filename,
+                'content_type': content_type
+            }), 500
+        
+    except Exception as e:
+        return jsonify({'error': f'Test failed: {str(e)}'}), 500
 
+def download_file_from_url(url, max_size_mb=20):
+    """
+    Download a file from a URL and return it as a file-like object
+    
+    Args:
+        url: The URL to download the file from
+        max_size_mb: Maximum file size in MB (default 20MB)
+        
+    Returns:
+        tuple: (file_obj, filename, content_type) or (None, None, None) if failed
+    """
+    print(f"🌐 [DOWNLOAD_FILE_FROM_URL] Starting download from URL: {url}")
+    
+    try:
+        # Validate URL format
+        parsed_url = urlparse(url)
+        if not parsed_url.scheme or not parsed_url.netloc:
+            print("❌ [DOWNLOAD_FILE_FROM_URL] Invalid URL format")
+            return None, None, None
+        
+        # Get filename from URL
+        filename = os.path.basename(parsed_url.path)
+        if not filename:
+            # If no filename in URL, try to get it from Content-Disposition header
+            filename = "downloaded_file"
+        
+        print(f"🌐 [DOWNLOAD_FILE_FROM_URL] Filename from URL: {filename}")
+        
+        # Download file with streaming to check size
+        print("🌐 [DOWNLOAD_FILE_FROM_URL] Starting download...")
+        response = requests.get(url, stream=True, timeout=30)
+        response.raise_for_status()
+        
+        # Check content type
+        content_type = response.headers.get('content-type', '')
+        print(f"🌐 [DOWNLOAD_FILE_FROM_URL] Content type: {content_type}")
+        
+        # Check file size
+        content_length = response.headers.get('content-length')
+        if content_length:
+            file_size = int(content_length)
+            max_size_bytes = max_size_mb * 1024 * 1024
+            if file_size > max_size_bytes:
+                print(f"❌ [DOWNLOAD_FILE_FROM_URL] File too large: {file_size} bytes (max: {max_size_bytes})")
+                return None, None, None
+            print(f"🌐 [DOWNLOAD_FILE_FROM_URL] File size: {file_size} bytes")
+        
+        # Download the file content
+        file_content = response.content
+        print(f"🌐 [DOWNLOAD_FILE_FROM_URL] Downloaded {len(file_content)} bytes")
+        
+        # Create file-like object
+        file_obj = io.BytesIO(file_content)
+        file_obj.name = filename
+        
+        print(f"✅ [DOWNLOAD_FILE_FROM_URL] File downloaded successfully: {filename}")
+        return file_obj, filename, content_type
+        
+    except requests.exceptions.RequestException as e:
+        print(f"❌ [DOWNLOAD_FILE_FROM_URL] Download failed: {e}")
+        return None, None, None
+    except Exception as e:
+        print(f"❌ [DOWNLOAD_FILE_FROM_URL] Unexpected error: {e}")
+        import traceback
+        print(f"❌ [DOWNLOAD_FILE_FROM_URL] Error traceback: {traceback.format_exc()}")
+        return None, None, None
+
+def is_valid_url(url):
+    """
+    Check if a string is a valid URL
+    
+    Args:
+        url: String to check
+        
+    Returns:
+        bool: True if valid URL, False otherwise
+    """
+    try:
+        parsed = urlparse(url)
+        return bool(parsed.scheme and parsed.netloc)
+    except:
+        return False
 
 # This module is designed to be imported by start.py
 # The Flask app will be started by the startup script 
