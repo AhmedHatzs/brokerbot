@@ -202,6 +202,36 @@ def init_database():
             )
         """)
         
+        # Add missing columns to existing messages table if they don't exist
+        try:
+            cursor.execute("ALTER TABLE messages ADD COLUMN file_id VARCHAR(255) DEFAULT NULL")
+            print("✅ Added file_id column to messages table")
+        except Error as e:
+            if "Duplicate column name" not in str(e):
+                print(f"⚠️  Error adding file_id column: {e}")
+        
+        try:
+            cursor.execute("ALTER TABLE messages ADD COLUMN filename VARCHAR(255) DEFAULT NULL")
+            print("✅ Added filename column to messages table")
+        except Error as e:
+            if "Duplicate column name" not in str(e):
+                print(f"⚠️  Error adding filename column: {e}")
+        
+        try:
+            cursor.execute("ALTER TABLE messages ADD COLUMN file_size INT DEFAULT NULL")
+            print("✅ Added file_size column to messages table")
+        except Error as e:
+            if "Duplicate column name" not in str(e):
+                print(f"⚠️  Error adding file_size column: {e}")
+        
+        # Add index for file_id if it doesn't exist
+        try:
+            cursor.execute("CREATE INDEX idx_file_id ON messages (file_id)")
+            print("✅ Added file_id index to messages table")
+        except Error as e:
+            if "Duplicate key name" not in str(e):
+                print(f"⚠️  Error adding file_id index: {e}")
+        
         connection.commit()
         cursor.close()
         connection.close()
@@ -328,11 +358,22 @@ def save_message_to_db(thread_id, role, content, file_id=None, filename=None, fi
         
         conversation_id = result[0]
         
-        # Save message with thread_id and file information
-        cursor.execute(
-            "INSERT INTO messages (conversation_id, thread_id, role, content, file_id, filename, file_size) VALUES (%s, %s, %s, %s, %s, %s, %s)",
-            (conversation_id, thread_id, role, content, file_id, filename, file_size)
-        )
+        # Try to save with file information first
+        try:
+            cursor.execute(
+                "INSERT INTO messages (conversation_id, thread_id, role, content, file_id, filename, file_size) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                (conversation_id, thread_id, role, content, file_id, filename, file_size)
+            )
+        except Error as e:
+            if "Unknown column" in str(e):
+                # Fallback to old schema if new columns don't exist
+                print("⚠️  Using fallback schema for message save")
+                cursor.execute(
+                    "INSERT INTO messages (conversation_id, thread_id, role, content) VALUES (%s, %s, %s, %s)",
+                    (conversation_id, thread_id, role, content)
+                )
+            else:
+                raise e
         
         connection.commit()
         cursor.close()
@@ -352,11 +393,18 @@ def save_file_to_db(file_id, filename, file_size, file_type, thread_id, session_
     try:
         cursor = connection.cursor()
         
-        # Save file metadata
-        cursor.execute(
-            "INSERT INTO files (file_id, filename, file_size, file_type, thread_id, session_id) VALUES (%s, %s, %s, %s, %s, %s)",
-            (file_id, filename, file_size, file_type, thread_id, session_id)
-        )
+        # Try to save file metadata
+        try:
+            cursor.execute(
+                "INSERT INTO files (file_id, filename, file_size, file_type, thread_id, session_id) VALUES (%s, %s, %s, %s, %s, %s)",
+                (file_id, filename, file_size, file_type, thread_id, session_id)
+            )
+        except Error as e:
+            if "doesn't exist" in str(e) or "Unknown table" in str(e):
+                print("⚠️  Files table doesn't exist yet, skipping file metadata save")
+                return True  # Don't fail the whole operation
+            else:
+                raise e
         
         connection.commit()
         cursor.close()
@@ -376,12 +424,20 @@ def get_thread_files(thread_id):
     try:
         cursor = connection.cursor(dictionary=True)
         
-        cursor.execute("""
-            SELECT file_id, filename, file_size, file_type, uploaded_at 
-            FROM files 
-            WHERE thread_id = %s 
-            ORDER BY uploaded_at ASC
-        """, (thread_id,))
+        # Check if files table exists
+        try:
+            cursor.execute("""
+                SELECT file_id, filename, file_size, file_type, uploaded_at 
+                FROM files 
+                WHERE thread_id = %s 
+                ORDER BY uploaded_at ASC
+            """, (thread_id,))
+        except Error as e:
+            if "doesn't exist" in str(e) or "Unknown table" in str(e):
+                print("⚠️  Files table doesn't exist yet, returning empty list")
+                return []
+            else:
+                raise e
         
         files = cursor.fetchall()
         cursor.close()
@@ -401,12 +457,26 @@ def get_conversation_history(thread_id):
     try:
         cursor = connection.cursor(dictionary=True)
         
-        cursor.execute("""
-            SELECT m.role, m.content, m.file_id, m.filename, m.file_size, m.created_at 
-            FROM messages m 
-            WHERE m.thread_id = %s 
-            ORDER BY m.created_at ASC
-        """, (thread_id,))
+        # Try with new columns first
+        try:
+            cursor.execute("""
+                SELECT m.role, m.content, m.file_id, m.filename, m.file_size, m.created_at 
+                FROM messages m 
+                WHERE m.thread_id = %s 
+                ORDER BY m.created_at ASC
+            """, (thread_id,))
+        except Error as e:
+            if "Unknown column" in str(e):
+                # Fallback to old schema if new columns don't exist
+                print("⚠️  Using fallback schema for conversation history")
+                cursor.execute("""
+                    SELECT m.role, m.content, m.created_at 
+                    FROM messages m 
+                    WHERE m.thread_id = %s 
+                    ORDER BY m.created_at ASC
+                """, (thread_id,))
+            else:
+                raise e
         
         messages = cursor.fetchall()
         cursor.close()
@@ -645,36 +715,49 @@ def process_message():
                     thread = openai_client.beta.threads.create()
                     thread_id = thread.id
             
-            # Get all files from thread history to attach to the message
-            thread_files = get_thread_files(thread_id)
-            file_ids_to_attach = []
-            
-            # Add current file if present
-            if file_id:
-                file_ids_to_attach.append(file_id)
-            
-            # Add files from thread history (so AI can reference previous files)
-            for file_info in thread_files:
-                if file_info['file_id'] not in file_ids_to_attach:
-                    file_ids_to_attach.append(file_info['file_id'])
-            
-            # Add user message to thread with all relevant files
-            if file_ids_to_attach:
-                # Handle message with file attachments
-                openai_client.beta.threads.messages.create(
-                    thread_id=thread_id,
-                    role="user",
-                    content=message or "Please analyze this file",
-                    file_ids=file_ids_to_attach
-                )
-                print(f"📎 Attached {len(file_ids_to_attach)} files to message: {file_ids_to_attach}")
-            else:
-                # Handle text message only
-                openai_client.beta.threads.messages.create(
-                    thread_id=thread_id,
-                    role="user",
-                    content=message
-                )
+                            # Get all files from thread history to attach to the message
+                thread_files = get_thread_files(thread_id)
+                file_ids_to_attach = []
+                
+                # Add current file if present
+                if file_id:
+                    file_ids_to_attach.append(file_id)
+                    print(f"📎 Adding current file: {file_id}")
+                
+                # Add files from thread history (so AI can reference previous files)
+                for file_info in thread_files:
+                    if file_info['file_id'] not in file_ids_to_attach:
+                        file_ids_to_attach.append(file_info['file_id'])
+                        print(f"📎 Adding historical file: {file_info['file_id']}")
+                
+                # Add user message to thread with all relevant files
+                if file_ids_to_attach:
+                    # Handle message with file attachments
+                    print(f"🔧 Creating message with {len(file_ids_to_attach)} files: {file_ids_to_attach}")
+                    try:
+                        openai_client.beta.threads.messages.create(
+                            thread_id=thread_id,
+                            role="user",
+                            content=message or "Please analyze this file",
+                            file_ids=file_ids_to_attach
+                        )
+                        print(f"✅ Message created successfully with files")
+                    except Exception as msg_error:
+                        print(f"❌ Error creating message with files: {msg_error}")
+                        # Fallback to message without files
+                        openai_client.beta.threads.messages.create(
+                            thread_id=thread_id,
+                            role="user",
+                            content=message or "Please analyze this file"
+                        )
+                        print(f"✅ Message created without files (fallback)")
+                else:
+                    # Handle text message only
+                    openai_client.beta.threads.messages.create(
+                        thread_id=thread_id,
+                        role="user",
+                        content=message
+                    )
             
             # Run the assistant
             run = openai_client.beta.threads.runs.create(
@@ -705,7 +788,11 @@ def process_message():
             
         except Exception as e:
             print(f"OpenAI Assistants API error: {e}")
-            return jsonify({'error': 'Failed to get response from OpenAI Assistant'}), 500
+            print(f"Error type: {type(e)}")
+            print(f"Error details: {str(e)}")
+            import traceback
+            print(f"Traceback: {traceback.format_exc()}")
+            return jsonify({'error': f'Failed to get response from OpenAI Assistant: {str(e)}'}), 500
         
         # Save assistant response to database
         try:
