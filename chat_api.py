@@ -284,6 +284,43 @@ def init_db_background():
 db_thread = threading.Thread(target=init_db_background, daemon=True)
 db_thread.start()
 
+def clean_response_text(response_text):
+    """
+    Clean up OpenAI response text to remove formatting artifacts and citations
+    
+    Args:
+        response_text: Raw response text from OpenAI
+        
+    Returns:
+        str: Cleaned response text
+    """
+    if not response_text:
+        return response_text
+    
+    import re
+    
+    # First, replace escaped characters
+    response_text = response_text.replace('\\"', '"')
+    response_text = response_text.replace('\\n', ' ')
+    response_text = response_text.replace('\\t', ' ')
+    
+    # Remove specific citation patterns (more precise)
+    response_text = re.sub(r'【\d+:\d+†source】', '', response_text)  # 【4:0†source】
+    response_text = re.sub(r'\[\d+:\d+\]', '', response_text)        # [4:0]
+    response_text = re.sub(r'\(\d+:\d+\)', '', response_text)        # (4:0)
+    response_text = re.sub(r'†', '', response_text)                  # † symbol
+    
+    # Remove any remaining 【】 brackets that might contain other content
+    response_text = re.sub(r'【[^】]*】', '', response_text)
+    
+    # Normalize whitespace (but preserve sentence structure)
+    response_text = re.sub(r'\s+', ' ', response_text)
+    
+    # Clean up any double spaces around punctuation
+    response_text = re.sub(r'\s+([.,!?])', r'\1', response_text)
+    
+    return response_text.strip()
+
 def extract_text_from_file(file_obj, filename):
     """
     Extract text from any file using appropriate method based on file type
@@ -813,8 +850,15 @@ def process_message():
         
         # Prepare content for database and OpenAI
         if file_upload and extracted_text:
-            # For all files, include the extracted text in the user message
-            user_content = f"File uploaded: {file_upload.filename}\n\nExtracted text from file:\n{extracted_text}\n\n{message if message else 'Please analyze this text extracted from the file.'}"
+            # For all files, include the extracted text in the user message with clear instructions
+            user_content = f"""File uploaded: {file_upload.filename}
+
+Extracted text from file:
+{extracted_text}
+
+{message if message else 'Please analyze this text and provide a clear, professional response without any formatting artifacts or citations.'}
+
+Please provide a clean, readable response without any source citations or formatting artifacts."""
         else:
             user_content = message if message else f"File uploaded: {file_upload.filename if file_upload else 'Unknown file'}"
         
@@ -932,6 +976,9 @@ def process_message():
             # Get the assistant's response
             messages = openai_client.beta.threads.messages.list(thread_id=thread_id)
             assistant_response = messages.data[0].content[0].text.value
+            
+            # Clean up the response to remove formatting artifacts and citations
+            assistant_response = clean_response_text(assistant_response)
             
         except Exception as e:
             print(f"OpenAI Assistants API error: {e}")
