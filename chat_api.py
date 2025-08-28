@@ -5,11 +5,15 @@ Backend API with MySQL and OpenAI integration
 
 Features:
 - Text message processing with OpenAI Assistants API
-- File upload support (txt, pdf, doc, docx, png, jpg, jpeg, gif)
+- File upload support with OCR for all file types
+  - All supported files: txt, pdf, doc, docx, md, png, jpg, jpeg, gif, bmp, tiff
+  - All files are processed using Tesseract OCR for text extraction
+  - Extracted text is sent to OpenAI for analysis
 - File persistence and retrieval across conversations
 - Thread-based conversation management
 - MySQL database persistence for messages and files
 - Session management
+- Tesseract OCR integration for universal text extraction
 
 API Endpoints:
 - POST /process_message - Process text messages or file uploads (supports both JSON and multipart form data)
@@ -51,6 +55,9 @@ import json
 from dotenv import load_dotenv
 import uuid
 import io
+import pytesseract
+from PIL import Image
+import tempfile
 
 # Load environment variables
 load_dotenv()
@@ -273,9 +280,43 @@ def init_db_background():
 db_thread = threading.Thread(target=init_db_background, daemon=True)
 db_thread.start()
 
+def extract_text_from_file(file_obj):
+    """
+    Extract text from any file using Tesseract OCR
+    
+    Args:
+        file_obj: File object containing any file type
+        
+    Returns:
+        str: Extracted text from the file, or None if extraction fails
+    """
+    try:
+        # Reset file pointer to beginning
+        file_obj.seek(0)
+        
+        # Open file as image using PIL (works for images, PDFs, and other files)
+        image = Image.open(file_obj)
+        
+        # Extract text using Tesseract OCR
+        extracted_text = pytesseract.image_to_string(image)
+        
+        # Clean up the extracted text
+        if extracted_text:
+            # Remove extra whitespace and normalize
+            cleaned_text = ' '.join(extracted_text.split())
+            print(f"✅ OCR extraction successful: {len(cleaned_text)} characters extracted")
+            return cleaned_text
+        else:
+            print("⚠️  OCR extraction returned empty text")
+            return None
+            
+    except Exception as e:
+        print(f"❌ OCR extraction failed: {e}")
+        return None
+
 def generate_thread_id():
     """Generate a unique thread ID for conversations"""
-    return str(uuid.uuid4())
+    return f"thread_{str(uuid.uuid4())}"
 
 def get_or_create_thread(session_id, thread_id=None):
     """Get existing thread or create a new one"""
@@ -546,11 +587,12 @@ def test_file_upload():
             return jsonify({'error': 'No file selected'}), 400
         
         # Validate file type and size
-        allowed_extensions = {'txt', 'pdf', 'doc', 'docx', 'png', 'jpg', 'jpeg', 'gif'}
+        supported_extensions = {'txt', 'pdf', 'doc', 'docx', 'md', 'png', 'jpg', 'jpeg', 'gif', 'bmp', 'tiff'}
+        
         file_extension = file.filename.rsplit('.', 1)[1].lower() if '.' in file.filename else ''
         
-        if file_extension not in allowed_extensions:
-            return jsonify({'error': f'File type not allowed. Allowed types: {", ".join(allowed_extensions)}'}), 400
+        if file_extension not in supported_extensions:
+            return jsonify({'error': f'File type not allowed. Allowed types: {", ".join(supported_extensions)}'}), 400
         
         # Check file size
         file.seek(0, 2)
@@ -560,24 +602,21 @@ def test_file_upload():
         if file_size > 20 * 1024 * 1024:
             return jsonify({'error': 'File size too large. Maximum size is 20MB'}), 400
         
-        # Test OpenAI upload
+        # Test file processing using OCR for all files
         try:
-            openai_client = get_openai_client()
+            # Test OCR extraction for all file types
+            extracted_text = extract_text_from_file(file)
             
-            # Read file content as bytes
-            file_content = file.read()
-            
-            # Create file object with proper format for OpenAI
-            file_obj = io.BytesIO(file_content)
-            file_obj.name = file.filename
-            
-            uploaded_file = openai_client.files.create(
-                file=file_obj,
-                purpose="assistants"
-            )
-            
-            # Clean up - delete the test file
-            openai_client.files.delete(uploaded_file.id)
+            if extracted_text:
+                print(f"✅ OCR test successful: {len(extracted_text)} characters extracted")
+            else:
+                return jsonify({
+                    'success': False,
+                    'error': 'OCR extraction failed during test',
+                    'filename': file.filename,
+                    'size': file_size,
+                    'type': file_extension
+                }), 500
             
             return jsonify({
                 'success': True,
@@ -632,14 +671,16 @@ def process_message():
         
         # Handle file upload if present
         file_id = None
+        extracted_text = None
         if file_upload:
             try:
-                # Validate file type and size
-                allowed_extensions = {'txt', 'pdf', 'doc', 'docx', 'png', 'jpg', 'jpeg', 'gif'}
+                # Define supported file types (all will use OCR)
+                supported_extensions = {'txt', 'pdf', 'doc', 'docx', 'md', 'png', 'jpg', 'jpeg', 'gif', 'bmp', 'tiff'}
+                
                 file_extension = file_upload.filename.rsplit('.', 1)[1].lower() if '.' in file_upload.filename else ''
                 
-                if file_extension not in allowed_extensions:
-                    return jsonify({'error': f'File type not allowed. Allowed types: {", ".join(allowed_extensions)}'}), 400
+                if file_extension not in supported_extensions:
+                    return jsonify({'error': f'File type not supported. Supported types: {", ".join(supported_extensions)}'}), 400
                 
                 # Check file size (max 20MB for OpenAI)
                 file_upload.seek(0, 2)  # Seek to end
@@ -649,29 +690,43 @@ def process_message():
                 if file_size > 20 * 1024 * 1024:  # 20MB limit
                     return jsonify({'error': 'File size too large. Maximum size is 20MB'}), 400
                 
-                # Upload file to OpenAI
-                openai_client = get_openai_client()
+                # Process all files using OCR
+                print(f"📄 Processing file with OCR: {file_upload.filename}")
                 
-                # Reset file pointer to beginning
-                file_upload.seek(0)
+                # Extract text from file using OCR
+                extracted_text = extract_text_from_file(file_upload)
                 
-                # Read file content as bytes
-                file_content = file_upload.read()
+                if extracted_text:
+                    # Create a temporary text file with extracted content for OpenAI
+                    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as temp_file:
+                        temp_file.write(extracted_text)
+                        temp_file_path = temp_file.name
+                    
+                    try:
+                        # Upload the extracted text as a text file to OpenAI
+                        openai_client = get_openai_client()
+                        
+                        with open(temp_file_path, 'rb') as text_file:
+                            file_obj = io.BytesIO(text_file.read())
+                            file_obj.name = f"{file_upload.filename}_extracted.txt"
+                            
+                            uploaded_file = openai_client.files.create(
+                                file=file_obj,
+                                purpose="assistants"
+                            )
+                            file_id = uploaded_file.id
+                            print(f"✅ File text extracted and uploaded: {file_upload.filename} -> {file_id}")
+                            
+                    finally:
+                        # Clean up temporary file
+                        if os.path.exists(temp_file_path):
+                            os.unlink(temp_file_path)
+                else:
+                    return jsonify({'error': 'Failed to extract text from file. Please ensure the file contains readable text.'}), 400
                 
-                # Create file object with proper format for OpenAI
-                file_obj = io.BytesIO(file_content)
-                file_obj.name = file_upload.filename
-                
-                uploaded_file = openai_client.files.create(
-                    file=file_obj,
-                    purpose="assistants"
-                )
-                file_id = uploaded_file.id
-                print(f"✅ File uploaded successfully: {file_upload.filename} -> {file_id}")
                 print(f"📊 File size: {file_size} bytes, Type: {file_extension}")
                 
                 # Save file metadata to database
-                file_extension = file_upload.filename.rsplit('.', 1)[1].lower() if '.' in file_upload.filename else ''
                 save_file_to_db(file_id, file_upload.filename, file_size, file_extension, thread_id, session_id)
                 
             except Exception as e:
@@ -680,7 +735,11 @@ def process_message():
                 return jsonify({'error': f'Failed to upload file to OpenAI: {str(e)}'}), 500
         
         # Prepare content for database and OpenAI
-        user_content = message if message else f"File uploaded: {file_upload.filename if file_upload else 'Unknown file'}"
+        if file_upload and extracted_text:
+            # For all files, include the extracted text in the user message
+            user_content = f"File uploaded: {file_upload.filename}\n\nExtracted text from file:\n{extracted_text}\n\n{message if message else 'Please analyze this text extracted from the file.'}"
+        else:
+            user_content = message if message else f"File uploaded: {file_upload.filename if file_upload else 'Unknown file'}"
         
         # Save user message to database with file information
         try:
@@ -708,16 +767,22 @@ def process_message():
                 thread_id = thread.id
                 print(f"🆕 Created new OpenAI thread: {thread_id}")
             else:
-                # Use existing thread
-                try:
-                    thread = openai_client.beta.threads.retrieve(thread_id)
-                    print(f"📋 Retrieved existing OpenAI thread: {thread_id}")
-                except Exception as e:
-                    print(f"⚠️  Thread {thread_id} not found in OpenAI, creating new one: {e}")
-                    # Thread doesn't exist, create new one
+                # Use existing thread - check if it's a valid OpenAI thread ID
+                if not thread_id.startswith('thread_'):
+                    print(f"⚠️  Invalid thread ID format: {thread_id}, creating new OpenAI thread")
                     thread = openai_client.beta.threads.create()
                     thread_id = thread.id
                     print(f"🆕 Created new OpenAI thread: {thread_id}")
+                else:
+                    try:
+                        thread = openai_client.beta.threads.retrieve(thread_id)
+                        print(f"📋 Retrieved existing OpenAI thread: {thread_id}")
+                    except Exception as e:
+                        print(f"⚠️  Thread {thread_id} not found in OpenAI, creating new one: {e}")
+                        # Thread doesn't exist, create new one
+                        thread = openai_client.beta.threads.create()
+                        thread_id = thread.id
+                        print(f"🆕 Created new OpenAI thread: {thread_id}")
             
             # Get all files from thread history to attach to the message
             thread_files = get_thread_files(thread_id)

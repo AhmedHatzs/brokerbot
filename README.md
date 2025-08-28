@@ -5,6 +5,9 @@ A production-ready backend API for Burdy's Auto Detail chatbot with MySQL databa
 ## ✨ Features
 
 - **AI-Powered Chatbot**: OpenAI GPT-3.5-turbo integration for intelligent responses
+- **File Upload Support**: 
+  - All file types (txt, pdf, doc, docx, md, png, jpg, jpeg, gif, bmp, tiff) - OCR text extraction using Tesseract
+  - All files are processed through OCR and extracted text is sent to OpenAI for analysis
 - **Conversation History**: Persistent chat sessions with MySQL database
 - **Production Ready**: Optimized for Railway deployment with Docker
 - **Health Monitoring**: Comprehensive health checks and status endpoints
@@ -66,6 +69,21 @@ A production-ready backend API for Burdy's Auto Detail chatbot with MySQL databa
    curl -X POST http://localhost:5007/process_message \
      -H "Content-Type: application/json" \
      -d '{"message": "Hello, can you help me with car detailing?", "session_id": "test-session"}'
+   
+   # Test OCR functionality
+   python test_ocr.py
+   
+   # Test file upload (text file)
+   curl -X POST http://localhost:5007/process_message \
+     -F "fileUpload=@test_document.txt" \
+     -F "message=Please analyze this document" \
+     -F "session_id=test-session"
+   
+   # Test file upload (image file)
+   curl -X POST http://localhost:5007/process_message \
+     -F "fileUpload=@your_image.png" \
+     -F "message=Please analyze the text in this image" \
+     -F "session_id=test-session"
    ```
 
 ## 🌐 API Endpoints
