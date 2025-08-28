@@ -706,58 +706,63 @@ def process_message():
                 # Create new thread
                 thread = openai_client.beta.threads.create()
                 thread_id = thread.id
+                print(f"🆕 Created new OpenAI thread: {thread_id}")
             else:
                 # Use existing thread
                 try:
                     thread = openai_client.beta.threads.retrieve(thread_id)
-                except Exception:
+                    print(f"📋 Retrieved existing OpenAI thread: {thread_id}")
+                except Exception as e:
+                    print(f"⚠️  Thread {thread_id} not found in OpenAI, creating new one: {e}")
                     # Thread doesn't exist, create new one
                     thread = openai_client.beta.threads.create()
                     thread_id = thread.id
+                    print(f"🆕 Created new OpenAI thread: {thread_id}")
             
-                            # Get all files from thread history to attach to the message
-                thread_files = get_thread_files(thread_id)
-                file_ids_to_attach = []
-                
-                # Add current file if present
-                if file_id:
-                    file_ids_to_attach.append(file_id)
-                    print(f"📎 Adding current file: {file_id}")
-                
-                # Add files from thread history (so AI can reference previous files)
-                for file_info in thread_files:
-                    if file_info['file_id'] not in file_ids_to_attach:
-                        file_ids_to_attach.append(file_info['file_id'])
-                        print(f"📎 Adding historical file: {file_info['file_id']}")
-                
-                # Add user message to thread with all relevant files
-                if file_ids_to_attach:
-                    # Handle message with file attachments
-                    print(f"🔧 Creating message with {len(file_ids_to_attach)} files: {file_ids_to_attach}")
-                    try:
-                        openai_client.beta.threads.messages.create(
-                            thread_id=thread_id,
-                            role="user",
-                            content=message or "Please analyze this file",
-                            file_ids=file_ids_to_attach
-                        )
-                        print(f"✅ Message created successfully with files")
-                    except Exception as msg_error:
-                        print(f"❌ Error creating message with files: {msg_error}")
-                        # Fallback to message without files
-                        openai_client.beta.threads.messages.create(
-                            thread_id=thread_id,
-                            role="user",
-                            content=message or "Please analyze this file"
-                        )
-                        print(f"✅ Message created without files (fallback)")
-                else:
-                    # Handle text message only
+            # Get all files from thread history to attach to the message
+            thread_files = get_thread_files(thread_id)
+            file_ids_to_attach = []
+            
+            # Add current file if present
+            if file_id:
+                file_ids_to_attach.append(file_id)
+                print(f"📎 Adding current file: {file_id}")
+            
+            # Add files from thread history (so AI can reference previous files)
+            for file_info in thread_files:
+                if file_info['file_id'] not in file_ids_to_attach:
+                    file_ids_to_attach.append(file_info['file_id'])
+                    print(f"📎 Adding historical file: {file_info['file_id']}")
+            
+            # Add user message to thread with all relevant files
+            if file_ids_to_attach:
+                # Handle message with file attachments
+                print(f"🔧 Creating message with {len(file_ids_to_attach)} files: {file_ids_to_attach}")
+                try:
+                    # Use the correct API format for file attachments
                     openai_client.beta.threads.messages.create(
                         thread_id=thread_id,
                         role="user",
-                        content=message
+                        content=message or "Please analyze this file",
+                        attachments=[{"file_id": file_id, "tools": [{"type": "file_search"}]} for file_id in file_ids_to_attach]
                     )
+                    print(f"✅ Message created successfully with files")
+                except Exception as msg_error:
+                    print(f"❌ Error creating message with files: {msg_error}")
+                    # Fallback to message without files
+                    openai_client.beta.threads.messages.create(
+                        thread_id=thread_id,
+                        role="user",
+                        content=message or "Please analyze this file"
+                    )
+                    print(f"✅ Message created without files (fallback)")
+            else:
+                # Handle text message only
+                openai_client.beta.threads.messages.create(
+                    thread_id=thread_id,
+                    role="user",
+                    content=message
+                )
             
             # Run the assistant
             run = openai_client.beta.threads.runs.create(
