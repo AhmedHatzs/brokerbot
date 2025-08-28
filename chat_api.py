@@ -50,6 +50,7 @@ from datetime import datetime
 import json
 from dotenv import load_dotenv
 import uuid
+import io
 
 # Load environment variables
 load_dotenv()
@@ -463,6 +464,72 @@ def ping():
         'timestamp': datetime.now().isoformat()
     }), 200
 
+@app.route('/test-file-upload', methods=['POST'])
+def test_file_upload():
+    """Test endpoint for file upload functionality"""
+    try:
+        if 'file' not in request.files:
+            return jsonify({'error': 'No file provided'}), 400
+        
+        file = request.files['file']
+        if file.filename == '':
+            return jsonify({'error': 'No file selected'}), 400
+        
+        # Validate file type and size
+        allowed_extensions = {'txt', 'pdf', 'doc', 'docx', 'png', 'jpg', 'jpeg', 'gif'}
+        file_extension = file.filename.rsplit('.', 1)[1].lower() if '.' in file.filename else ''
+        
+        if file_extension not in allowed_extensions:
+            return jsonify({'error': f'File type not allowed. Allowed types: {", ".join(allowed_extensions)}'}), 400
+        
+        # Check file size
+        file.seek(0, 2)
+        file_size = file.tell()
+        file.seek(0)
+        
+        if file_size > 20 * 1024 * 1024:
+            return jsonify({'error': 'File size too large. Maximum size is 20MB'}), 400
+        
+        # Test OpenAI upload
+        try:
+            openai_client = get_openai_client()
+            
+            # Read file content as bytes
+            file_content = file.read()
+            
+            # Create file object with proper format for OpenAI
+            file_obj = io.BytesIO(file_content)
+            file_obj.name = file.filename
+            
+            uploaded_file = openai_client.files.create(
+                file=file_obj,
+                purpose="assistants"
+            )
+            
+            # Clean up - delete the test file
+            openai_client.files.delete(uploaded_file.id)
+            
+            return jsonify({
+                'success': True,
+                'message': 'File upload test successful',
+                'filename': file.filename,
+                'size': file_size,
+                'type': file_extension,
+                'timestamp': datetime.now().isoformat()
+            }), 200
+            
+        except Exception as e:
+            return jsonify({
+                'success': False,
+                'error': f'OpenAI upload test failed: {str(e)}',
+                'filename': file.filename,
+                'size': file_size,
+                'type': file_extension
+            }), 500
+        
+    except Exception as e:
+        return jsonify({'error': f'Test failed: {str(e)}'}), 500
+
 @app.route('/process_message', methods=['POST'])
 def process_message():
     """Process chat message with OpenAI and save to MySQL with thread support"""
@@ -514,12 +581,24 @@ def process_message():
                 
                 # Upload file to OpenAI
                 openai_client = get_openai_client()
+                
+                # Reset file pointer to beginning
+                file_upload.seek(0)
+                
+                # Read file content as bytes
+                file_content = file_upload.read()
+                
+                # Create file object with proper format for OpenAI
+                file_obj = io.BytesIO(file_content)
+                file_obj.name = file_upload.filename
+                
                 uploaded_file = openai_client.files.create(
-                    file=file_upload,
+                    file=file_obj,
                     purpose="assistants"
                 )
                 file_id = uploaded_file.id
                 print(f"✅ File uploaded successfully: {file_upload.filename} -> {file_id}")
+                print(f"📊 File size: {file_size} bytes, Type: {file_extension}")
                 
                 # Save file metadata to database
                 file_extension = file_upload.filename.rsplit('.', 1)[1].lower() if '.' in file_upload.filename else ''
@@ -527,7 +606,8 @@ def process_message():
                 
             except Exception as e:
                 print(f"File upload error: {e}")
-                return jsonify({'error': 'Failed to upload file to OpenAI'}), 500
+                print(f"File details - Name: {file_upload.filename}, Size: {file_size}, Type: {file_extension}")
+                return jsonify({'error': f'Failed to upload file to OpenAI: {str(e)}'}), 500
         
         # Prepare content for database and OpenAI
         user_content = message if message else f"File uploaded: {file_upload.filename if file_upload else 'Unknown file'}"
