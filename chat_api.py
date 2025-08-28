@@ -141,17 +141,25 @@ MYSQL_CONFIG = get_mysql_config()
 
 def get_mysql_connection():
     """Create and return MySQL connection with production-ready error handling"""
+    print(f"🔌 [GET_MYSQL_CONNECTION] Attempting database connection")
+    print(f"🔌 [GET_MYSQL_CONNECTION] Config host: {MYSQL_CONFIG.get('host')}")
+    print(f"🔌 [GET_MYSQL_CONNECTION] Config database: {MYSQL_CONFIG.get('database')}")
+    print(f"🔌 [GET_MYSQL_CONNECTION] Config port: {MYSQL_CONFIG.get('port')}")
+    
     try:
         connection = mysql.connector.connect(**MYSQL_CONFIG)
+        print("✅ [GET_MYSQL_CONNECTION] Database connection successful")
         return connection
     except Error as e:
-        print(f"Error connecting to MySQL: {e}")
+        print(f"❌ [GET_MYSQL_CONNECTION] MySQL Error connecting to database: {e}")
         # In production, log more details but don't expose sensitive info
         if os.getenv('RAILWAY_ENVIRONMENT') == 'production':
-            print(f"Database connection failed - Host: {MYSQL_CONFIG.get('host')}, Database: {MYSQL_CONFIG.get('database')}")
+            print(f"❌ [GET_MYSQL_CONNECTION] Database connection failed - Host: {MYSQL_CONFIG.get('host')}, Database: {MYSQL_CONFIG.get('database')}")
         return None
     except Exception as e:
-        print(f"Unexpected error connecting to MySQL: {e}")
+        print(f"❌ [GET_MYSQL_CONNECTION] Unexpected error connecting to MySQL: {e}")
+        import traceback
+        print(f"❌ [GET_MYSQL_CONNECTION] Connection error traceback: {traceback.format_exc()}")
         return None
 
 def init_database():
@@ -294,17 +302,23 @@ def clean_response_text(response_text):
     Returns:
         str: Cleaned response text
     """
+    print(f"🧹 [CLEAN_RESPONSE_TEXT] Starting response cleaning")
+    print(f"🧹 [CLEAN_RESPONSE_TEXT] Original response length: {len(response_text) if response_text else 0}")
+    
     if not response_text:
+        print("🧹 [CLEAN_RESPONSE_TEXT] No response text to clean")
         return response_text
     
     import re
     
     # First, replace escaped characters
+    print("🧹 [CLEAN_RESPONSE_TEXT] Replacing escaped characters")
     response_text = response_text.replace('\\"', '"')
     response_text = response_text.replace('\\n', ' ')
     response_text = response_text.replace('\\t', ' ')
     
     # Remove specific citation patterns (more precise)
+    print("🧹 [CLEAN_RESPONSE_TEXT] Removing citation patterns")
     response_text = re.sub(r'【\d+:\d+†source】', '', response_text)  # 【4:0†source】
     response_text = re.sub(r'\[\d+:\d+\]', '', response_text)        # [4:0]
     response_text = re.sub(r'\(\d+:\d+\)', '', response_text)        # (4:0)
@@ -314,12 +328,16 @@ def clean_response_text(response_text):
     response_text = re.sub(r'【[^】]*】', '', response_text)
     
     # Normalize whitespace (but preserve sentence structure)
+    print("🧹 [CLEAN_RESPONSE_TEXT] Normalizing whitespace")
     response_text = re.sub(r'\s+', ' ', response_text)
     
     # Clean up any double spaces around punctuation
     response_text = re.sub(r'\s+([.,!?])', r'\1', response_text)
     
-    return response_text.strip()
+    cleaned_text = response_text.strip()
+    print(f"🧹 [CLEAN_RESPONSE_TEXT] Cleaning completed - final length: {len(cleaned_text)}")
+    
+    return cleaned_text
 
 def extract_text_from_file(file_obj, filename):
     """
@@ -332,100 +350,131 @@ def extract_text_from_file(file_obj, filename):
     Returns:
         str: Extracted text from the file, or None if extraction fails
     """
+    print(f"📄 [EXTRACT_TEXT_FROM_FILE] Starting text extraction for: {filename}")
+    
     try:
         # Reset file pointer to beginning
         file_obj.seek(0)
         
         # Get file extension
         file_extension = filename.rsplit('.', 1)[1].lower() if '.' in filename else ''
+        print(f"📄 [EXTRACT_TEXT_FROM_FILE] File extension: {file_extension}")
         
         # Read file content
         file_content = file_obj.read()
         file_obj.seek(0)  # Reset pointer again
+        print(f"📄 [EXTRACT_TEXT_FROM_FILE] File content size: {len(file_content)} bytes")
         
         extracted_text = ""
         
         if file_extension in {'pdf'}:
             # Handle PDF files
-            print(f"📄 Processing PDF file: {filename}")
+            print(f"📄 [EXTRACT_TEXT_FROM_FILE] Processing PDF file: {filename}")
             try:
                 # First try to extract text directly from PDF
+                print("📄 [EXTRACT_TEXT_FROM_FILE] Attempting direct PDF text extraction")
                 pdf_reader = PyPDF2.PdfReader(io.BytesIO(file_content))
-                for page in pdf_reader.pages:
+                print(f"📄 [EXTRACT_TEXT_FROM_FILE] PDF has {len(pdf_reader.pages)} pages")
+                
+                for page_num, page in enumerate(pdf_reader.pages):
                     page_text = page.extract_text()
                     if page_text:
                         extracted_text += page_text + "\n"
+                        print(f"📄 [EXTRACT_TEXT_FROM_FILE] Page {page_num + 1}: {len(page_text)} characters extracted")
+                    else:
+                        print(f"📄 [EXTRACT_TEXT_FROM_FILE] Page {page_num + 1}: No text found")
                 
                 # If no text extracted, try OCR on PDF pages
                 if not extracted_text.strip():
-                    print("📄 No text found in PDF, trying OCR on pages...")
+                    print("📄 [EXTRACT_TEXT_FROM_FILE] No text found in PDF, trying OCR on pages...")
                     images = convert_from_bytes(file_content)
+                    print(f"📄 [EXTRACT_TEXT_FROM_FILE] Converted PDF to {len(images)} images for OCR")
+                    
                     for i, image in enumerate(images):
+                        print(f"📄 [EXTRACT_TEXT_FROM_FILE] Running OCR on page {i+1}")
                         page_text = pytesseract.image_to_string(image)
                         if page_text:
                             extracted_text += f"Page {i+1}: {page_text}\n"
+                            print(f"📄 [EXTRACT_TEXT_FROM_FILE] Page {i+1} OCR: {len(page_text)} characters")
+                        else:
+                            print(f"📄 [EXTRACT_TEXT_FROM_FILE] Page {i+1} OCR: No text found")
                 
             except Exception as e:
-                print(f"⚠️  PDF text extraction failed, trying OCR: {e}")
+                print(f"⚠️ [EXTRACT_TEXT_FROM_FILE] PDF text extraction failed, trying OCR: {e}")
                 # Fallback to OCR
                 try:
+                    print("📄 [EXTRACT_TEXT_FROM_FILE] Starting OCR fallback for PDF")
                     images = convert_from_bytes(file_content)
+                    print(f"📄 [EXTRACT_TEXT_FROM_FILE] OCR fallback: Converted to {len(images)} images")
+                    
                     for i, image in enumerate(images):
+                        print(f"📄 [EXTRACT_TEXT_FROM_FILE] OCR fallback on page {i+1}")
                         page_text = pytesseract.image_to_string(image)
                         if page_text:
                             extracted_text += f"Page {i+1}: {page_text}\n"
+                            print(f"📄 [EXTRACT_TEXT_FROM_FILE] OCR fallback page {i+1}: {len(page_text)} characters")
+                        else:
+                            print(f"📄 [EXTRACT_TEXT_FROM_FILE] OCR fallback page {i+1}: No text found")
                 except Exception as ocr_error:
-                    print(f"❌ PDF OCR failed: {ocr_error}")
+                    print(f"❌ [EXTRACT_TEXT_FROM_FILE] PDF OCR failed: {ocr_error}")
                     return None
                     
         elif file_extension in {'txt', 'md'}:
             # Handle text files directly
-            print(f"📄 Processing text file: {filename}")
+            print(f"📄 [EXTRACT_TEXT_FROM_FILE] Processing text file: {filename}")
             try:
                 # Try to decode as text
                 extracted_text = file_content.decode('utf-8')
+                print(f"📄 [EXTRACT_TEXT_FROM_FILE] Text file decoded with UTF-8: {len(extracted_text)} characters")
             except UnicodeDecodeError:
                 try:
                     extracted_text = file_content.decode('latin-1')
+                    print(f"📄 [EXTRACT_TEXT_FROM_FILE] Text file decoded with Latin-1: {len(extracted_text)} characters")
                 except:
-                    print("❌ Could not decode text file")
+                    print("❌ [EXTRACT_TEXT_FROM_FILE] Could not decode text file")
                     return None
                     
         elif file_extension in {'doc', 'docx'}:
             # Handle Word documents - convert to text first
-            print(f"📄 Processing Word document: {filename}")
+            print(f"📄 [EXTRACT_TEXT_FROM_FILE] Processing Word document: {filename}")
             # For now, we'll need to convert these to PDF or images first
             # This is a simplified approach - in production you might want to use python-docx
             try:
                 # Try OCR on the document as if it were an image
+                print("📄 [EXTRACT_TEXT_FROM_FILE] Attempting OCR on Word document")
                 image = Image.open(io.BytesIO(file_content))
                 extracted_text = pytesseract.image_to_string(image)
+                print(f"📄 [EXTRACT_TEXT_FROM_FILE] Word document OCR: {len(extracted_text)} characters")
             except Exception as e:
-                print(f"❌ Word document processing failed: {e}")
+                print(f"❌ [EXTRACT_TEXT_FROM_FILE] Word document processing failed: {e}")
                 return None
                 
         else:
             # Handle image files (png, jpg, jpeg, gif, bmp, tiff)
-            print(f"🖼️  Processing image file: {filename}")
+            print(f"🖼️ [EXTRACT_TEXT_FROM_FILE] Processing image file: {filename}")
             try:
                 image = Image.open(io.BytesIO(file_content))
+                print(f"🖼️ [EXTRACT_TEXT_FROM_FILE] Image opened successfully: {image.size}")
                 extracted_text = pytesseract.image_to_string(image)
+                print(f"🖼️ [EXTRACT_TEXT_FROM_FILE] Image OCR: {len(extracted_text)} characters")
             except Exception as e:
-                print(f"❌ Image processing failed: {e}")
+                print(f"❌ [EXTRACT_TEXT_FROM_FILE] Image processing failed: {e}")
                 return None
         
         # Clean up the extracted text
         if extracted_text and extracted_text.strip():
             # Remove extra whitespace and normalize
             cleaned_text = ' '.join(extracted_text.split())
-            print(f"✅ Text extraction successful: {len(cleaned_text)} characters extracted")
+            print(f"✅ [EXTRACT_TEXT_FROM_FILE] Text extraction successful: {len(cleaned_text)} characters extracted")
             return cleaned_text
         else:
-            print("⚠️  Text extraction returned empty text")
+            print("⚠️ [EXTRACT_TEXT_FROM_FILE] Text extraction returned empty text")
             return None
             
     except Exception as e:
-        print(f"❌ Text extraction failed: {e}")
+        print(f"❌ [EXTRACT_TEXT_FROM_FILE] Text extraction failed: {e}")
+        import traceback
+        print(f"❌ [EXTRACT_TEXT_FROM_FILE] Text extraction error traceback: {traceback.format_exc()}")
         return None
 
 def generate_thread_id():
@@ -434,14 +483,18 @@ def generate_thread_id():
 
 def get_or_create_thread(session_id, thread_id=None):
     """Get existing thread or create a new one"""
+    print(f"🔄 [GET_OR_CREATE_THREAD] Starting with session_id: {session_id}, thread_id: {thread_id}")
+    
     connection = get_mysql_connection()
     if not connection:
+        print("❌ [GET_OR_CREATE_THREAD] Database connection failed")
         return None
     
     try:
         cursor = connection.cursor(dictionary=True)
         
         if thread_id:
+            print(f"🔍 [GET_OR_CREATE_THREAD] Looking for existing thread: {thread_id}")
             # Try to get existing thread
             cursor.execute("""
                 SELECT id, thread_id, session_id, title, created_at 
@@ -451,10 +504,12 @@ def get_or_create_thread(session_id, thread_id=None):
             result = cursor.fetchone()
             
             if result:
+                print(f"✅ [GET_OR_CREATE_THREAD] Found existing thread: {thread_id}")
                 cursor.close()
                 connection.close()
                 return result
             else:
+                print(f"🆕 [GET_OR_CREATE_THREAD] Thread not found, creating new one with provided ID: {thread_id}")
                 # Thread doesn't exist, create new one
                 cursor.execute("""
                     INSERT INTO conversations (thread_id, session_id, title) 
@@ -472,8 +527,10 @@ def get_or_create_thread(session_id, thread_id=None):
                     'created_at': datetime.now()
                 }
         else:
+            print("🆕 [GET_OR_CREATE_THREAD] No thread_id provided, creating new thread")
             # Create new thread with generated ID
             new_thread_id = generate_thread_id()
+            print(f"🆕 [GET_OR_CREATE_THREAD] Generated new thread_id: {new_thread_id}")
             cursor.execute("""
                 INSERT INTO conversations (thread_id, session_id, title) 
                 VALUES (%s, %s, %s)
@@ -482,6 +539,7 @@ def get_or_create_thread(session_id, thread_id=None):
             cursor.close()
             connection.close()
             
+            print(f"✅ [GET_OR_CREATE_THREAD] Created new thread with ID: {new_thread_id}")
             return {
                 'id': conversation_id,
                 'thread_id': new_thread_id,
@@ -491,52 +549,68 @@ def get_or_create_thread(session_id, thread_id=None):
             }
         
     except Error as e:
-        print(f"Error in get_or_create_thread: {e}")
+        print(f"❌ [GET_OR_CREATE_THREAD] Database error: {e}")
+        import traceback
+        print(f"❌ [GET_OR_CREATE_THREAD] Database error traceback: {traceback.format_exc()}")
         return None
 
 def save_message_to_db(thread_id, role, content, file_id=None, filename=None, file_size=None):
     """Save message to MySQL database with thread_id and optional file information"""
+    print(f"💾 [SAVE_MESSAGE_TO_DB] Starting save for thread_id: {thread_id}, role: {role}")
+    print(f"💾 [SAVE_MESSAGE_TO_DB] Content length: {len(content) if content else 0}")
+    print(f"💾 [SAVE_MESSAGE_TO_DB] File info - file_id: {file_id}, filename: {filename}, file_size: {file_size}")
+    
     connection = get_mysql_connection()
     if not connection:
+        print("❌ [SAVE_MESSAGE_TO_DB] Database connection failed")
         return None
     
     try:
         cursor = connection.cursor()
         
         # Get conversation ID for this thread
+        print(f"🔍 [SAVE_MESSAGE_TO_DB] Looking up conversation ID for thread: {thread_id}")
         cursor.execute("SELECT id FROM conversations WHERE thread_id = %s", (thread_id,))
         result = cursor.fetchone()
         
         if not result:
-            print(f"Thread {thread_id} not found")
+            print(f"❌ [SAVE_MESSAGE_TO_DB] Thread {thread_id} not found in conversations table")
             return None
         
         conversation_id = result[0]
+        print(f"✅ [SAVE_MESSAGE_TO_DB] Found conversation_id: {conversation_id}")
         
         # Try to save with file information first
         try:
+            print("💾 [SAVE_MESSAGE_TO_DB] Attempting to save with file information")
             cursor.execute(
                 "INSERT INTO messages (conversation_id, thread_id, role, content, file_id, filename, file_size) VALUES (%s, %s, %s, %s, %s, %s, %s)",
                 (conversation_id, thread_id, role, content, file_id, filename, file_size)
             )
+            print("✅ [SAVE_MESSAGE_TO_DB] Message saved successfully with file information")
         except Error as e:
             if "Unknown column" in str(e):
                 # Fallback to old schema if new columns don't exist
-                print("⚠️  Using fallback schema for message save")
+                print("⚠️ [SAVE_MESSAGE_TO_DB] Using fallback schema for message save")
                 cursor.execute(
                     "INSERT INTO messages (conversation_id, thread_id, role, content) VALUES (%s, %s, %s, %s)",
                     (conversation_id, thread_id, role, content)
                 )
+                print("✅ [SAVE_MESSAGE_TO_DB] Message saved successfully with fallback schema")
             else:
+                print(f"❌ [SAVE_MESSAGE_TO_DB] Database error: {e}")
                 raise e
         
         connection.commit()
         cursor.close()
         connection.close()
+        print(f"✅ [SAVE_MESSAGE_TO_DB] Message save completed successfully")
         return conversation_id
         
     except Error as e:
-        print(f"Error saving message to database: {e}")
+        print(f"❌ [SAVE_MESSAGE_TO_DB] Error saving message to database: {e}")
+        import traceback
+        print(f"❌ [SAVE_MESSAGE_TO_DB] Database error traceback: {traceback.format_exc()}")
         return None
 
 def save_file_to_db(file_id, filename, file_size, file_type, thread_id, session_id):
@@ -756,68 +830,100 @@ def test_file_upload():
 @app.route('/process_message', methods=['POST'])
 def process_message():
     """Process chat message with OpenAI and save to MySQL with thread support"""
+    print(f"🚀 [PROCESS_MESSAGE] Starting request processing at {datetime.now()}")
+    
     try:
+        # Log request details
+        print(f"📋 [PROCESS_MESSAGE] Request content type: {request.content_type}")
+        print(f"📋 [PROCESS_MESSAGE] Request method: {request.method}")
+        print(f"📋 [PROCESS_MESSAGE] Request headers: {dict(request.headers)}")
+        
         # Handle both JSON and multipart form data
         if request.content_type and 'multipart/form-data' in request.content_type:
+            print("📋 [PROCESS_MESSAGE] Processing multipart form data")
             # Handle file upload in multipart form
             message = request.form.get('message')
             session_id = request.form.get('session_id', 'default_session')
             thread_id = request.form.get('thread_id')
             file_upload = request.files.get('fileUpload')  # File object
+            
+            print(f"📋 [PROCESS_MESSAGE] Multipart data - message: {message}, session_id: {session_id}, thread_id: {thread_id}")
+            print(f"📋 [PROCESS_MESSAGE] File upload present: {file_upload is not None}")
+            if file_upload:
+                print(f"📋 [PROCESS_MESSAGE] File details - name: {file_upload.filename}, content_type: {file_upload.content_type}")
         else:
+            print("📋 [PROCESS_MESSAGE] Processing JSON payload")
             # Handle JSON payload
             data = request.json
             message = data.get('message')
             session_id = data.get('session_id', 'default_session')
             thread_id = data.get('thread_id')
             file_upload = None
+            
+            print(f"📋 [PROCESS_MESSAGE] JSON data - message: {message}, session_id: {session_id}, thread_id: {thread_id}")
         
         # Validate that either message or fileUpload is provided
+        print(f"🔍 [PROCESS_MESSAGE] Validation - message present: {bool(message)}, file_upload present: {bool(file_upload)}")
         if not message and not file_upload:
+            print("❌ [PROCESS_MESSAGE] Validation failed: Neither message nor fileUpload provided")
             return jsonify({'error': 'Either message or fileUpload is required'}), 400
         
+        print("✅ [PROCESS_MESSAGE] Request validation passed")
+        
         # Get or create thread
+        print(f"🔄 [PROCESS_MESSAGE] Getting/creating thread for session_id: {session_id}, thread_id: {thread_id}")
         thread_info = get_or_create_thread(session_id, thread_id)
         if not thread_info:
+            print("❌ [PROCESS_MESSAGE] Failed to create or retrieve thread")
             return jsonify({'error': 'Failed to create or retrieve thread'}), 500
         
         thread_id = thread_info['thread_id']
+        print(f"✅ [PROCESS_MESSAGE] Thread ready: {thread_id}")
         
         # Handle file upload if present
         file_id = None
         extracted_text = None
         if file_upload:
+            print(f"📄 [PROCESS_MESSAGE] Starting file processing for: {file_upload.filename}")
             try:
                 # Define supported file types (all will use OCR)
                 supported_extensions = {'txt', 'pdf', 'doc', 'docx', 'md', 'png', 'jpg', 'jpeg', 'gif', 'bmp', 'tiff'}
                 
                 file_extension = file_upload.filename.rsplit('.', 1)[1].lower() if '.' in file_upload.filename else ''
+                print(f"📄 [PROCESS_MESSAGE] File extension: {file_extension}")
                 
                 if file_extension not in supported_extensions:
+                    print(f"❌ [PROCESS_MESSAGE] Unsupported file type: {file_extension}")
                     return jsonify({'error': f'File type not supported. Supported types: {", ".join(supported_extensions)}'}), 400
                 
                 # Check file size (max 20MB for OpenAI)
                 file_upload.seek(0, 2)  # Seek to end
                 file_size = file_upload.tell()
                 file_upload.seek(0)  # Reset to beginning
+                print(f"📄 [PROCESS_MESSAGE] File size: {file_size} bytes")
                 
                 if file_size > 20 * 1024 * 1024:  # 20MB limit
+                    print(f"❌ [PROCESS_MESSAGE] File too large: {file_size} bytes")
                     return jsonify({'error': 'File size too large. Maximum size is 20MB'}), 400
                 
                 # Process all files using OCR
-                print(f"📄 Processing file with OCR: {file_upload.filename}")
+                print(f"📄 [PROCESS_MESSAGE] Starting OCR text extraction for: {file_upload.filename}")
                 
                 # Extract text from file using OCR
                 extracted_text = extract_text_from_file(file_upload, file_upload.filename)
                 
                 if extracted_text:
+                    print(f"✅ [PROCESS_MESSAGE] Text extraction successful: {len(extracted_text)} characters")
+                    
                     # Create a temporary text file with extracted content for OpenAI
+                    print("📄 [PROCESS_MESSAGE] Creating temporary file for OpenAI upload")
                     with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as temp_file:
                         temp_file.write(extracted_text)
                         temp_file_path = temp_file.name
                     
                     try:
                         # Upload the extracted text as a text file to OpenAI
+                        print("📄 [PROCESS_MESSAGE] Uploading extracted text to OpenAI")
                         openai_client = get_openai_client()
                         
                         with open(temp_file_path, 'rb') as text_file:
@@ -829,26 +935,33 @@ def process_message():
                                 purpose="assistants"
                             )
                             file_id = uploaded_file.id
-                            print(f"✅ File text extracted and uploaded: {file_upload.filename} -> {file_id}")
+                            print(f"✅ [PROCESS_MESSAGE] File uploaded to OpenAI: {file_id}")
                             
                     finally:
                         # Clean up temporary file
                         if os.path.exists(temp_file_path):
                             os.unlink(temp_file_path)
+                            print("🧹 [PROCESS_MESSAGE] Temporary file cleaned up")
                 else:
+                    print("❌ [PROCESS_MESSAGE] Text extraction failed")
                     return jsonify({'error': 'Failed to extract text from file. Please ensure the file contains readable text.'}), 400
                 
-                print(f"📊 File size: {file_size} bytes, Type: {file_extension}")
+                print(f"📊 [PROCESS_MESSAGE] File processing complete - size: {file_size} bytes, type: {file_extension}")
                 
                 # Save file metadata to database
+                print("💾 [PROCESS_MESSAGE] Saving file metadata to database")
                 save_file_to_db(file_id, file_upload.filename, file_size, file_extension, thread_id, session_id)
+                print("✅ [PROCESS_MESSAGE] File metadata saved to database")
                 
             except Exception as e:
-                print(f"File upload error: {e}")
-                print(f"File details - Name: {file_upload.filename}, Size: {file_size}, Type: {file_extension}")
+                print(f"❌ [PROCESS_MESSAGE] File upload error: {e}")
+                print(f"📄 [PROCESS_MESSAGE] File details - Name: {file_upload.filename}, Size: {file_size}, Type: {file_extension}")
+                import traceback
+                print(f"📄 [PROCESS_MESSAGE] File error traceback: {traceback.format_exc()}")
                 return jsonify({'error': f'Failed to upload file to OpenAI: {str(e)}'}), 500
         
         # Prepare content for database and OpenAI
+        print("📝 [PROCESS_MESSAGE] Preparing content for processing")
         if file_upload and extracted_text:
             # For all files, include the extracted text in the user message with clear instructions
             user_content = f"""File uploaded: {file_upload.filename}
@@ -859,71 +972,84 @@ Extracted text from file:
 {message if message else 'Please analyze this text and provide a clear, professional response without any formatting artifacts or citations.'}
 
 Please provide a clean, readable response without any source citations or formatting artifacts."""
+            print(f"📝 [PROCESS_MESSAGE] Prepared content with file: {len(user_content)} characters")
         else:
             user_content = message if message else f"File uploaded: {file_upload.filename if file_upload else 'Unknown file'}"
+            print(f"📝 [PROCESS_MESSAGE] Prepared content without file: {len(user_content)} characters")
         
         # Save user message to database with file information
+        print("💾 [PROCESS_MESSAGE] Saving user message to database")
         try:
             save_message_to_db(thread_id, 'user', user_content, file_id, file_upload.filename if file_upload else None, file_size if file_upload else None)
+            print("✅ [PROCESS_MESSAGE] User message saved to database")
             # Get conversation history for context
             history = get_conversation_history(thread_id)
+            print(f"📋 [PROCESS_MESSAGE] Retrieved conversation history: {len(history)} messages")
         except Exception as e:
-            print(f"Database operation failed: {e}")
+            print(f"❌ [PROCESS_MESSAGE] Database operation failed: {e}")
+            import traceback
+            print(f"📋 [PROCESS_MESSAGE] Database error traceback: {traceback.format_exc()}")
             history = []
         
         # Use OpenAI Assistants API
+        print("🤖 [PROCESS_MESSAGE] Starting OpenAI Assistants API processing")
         try:
             if not assistant_id:
+                print("❌ [PROCESS_MESSAGE] OpenAI Assistant ID not configured")
                 return jsonify({'error': 'OpenAI Assistant ID not configured'}), 500
             
             # Get client with beta headers
             openai_client = get_openai_client()
-            print(f"🔧 OpenAI client created with headers: {openai_client._client.headers.get('OpenAI-Beta', 'NOT SET')}")
-            print(f"🔧 All headers: {dict(openai_client._client.headers)}")
+            print(f"🔧 [PROCESS_MESSAGE] OpenAI client created with headers: {openai_client._client.headers.get('OpenAI-Beta', 'NOT SET')}")
+            print(f"🔧 [PROCESS_MESSAGE] All headers: {dict(openai_client._client.headers)}")
             
             # Create or get thread for this conversation
             if not thread_id:
                 # Create new thread
+                print("🆕 [PROCESS_MESSAGE] Creating new OpenAI thread")
                 thread = openai_client.beta.threads.create()
                 thread_id = thread.id
-                print(f"🆕 Created new OpenAI thread: {thread_id}")
+                print(f"🆕 [PROCESS_MESSAGE] Created new OpenAI thread: {thread_id}")
             else:
                 # Use existing thread - check if it's a valid OpenAI thread ID
                 if not thread_id.startswith('thread_'):
-                    print(f"⚠️  Invalid thread ID format: {thread_id}, creating new OpenAI thread")
+                    print(f"⚠️ [PROCESS_MESSAGE] Invalid thread ID format: {thread_id}, creating new OpenAI thread")
                     thread = openai_client.beta.threads.create()
                     thread_id = thread.id
-                    print(f"🆕 Created new OpenAI thread: {thread_id}")
+                    print(f"🆕 [PROCESS_MESSAGE] Created new OpenAI thread: {thread_id}")
                 else:
                     try:
+                        print(f"📋 [PROCESS_MESSAGE] Retrieving existing OpenAI thread: {thread_id}")
                         thread = openai_client.beta.threads.retrieve(thread_id)
-                        print(f"📋 Retrieved existing OpenAI thread: {thread_id}")
+                        print(f"📋 [PROCESS_MESSAGE] Retrieved existing OpenAI thread: {thread_id}")
                     except Exception as e:
-                        print(f"⚠️  Thread {thread_id} not found in OpenAI, creating new one: {e}")
+                        print(f"⚠️ [PROCESS_MESSAGE] Thread {thread_id} not found in OpenAI, creating new one: {e}")
                         # Thread doesn't exist, create new one
                         thread = openai_client.beta.threads.create()
                         thread_id = thread.id
-                        print(f"🆕 Created new OpenAI thread: {thread_id}")
+                        print(f"🆕 [PROCESS_MESSAGE] Created new OpenAI thread: {thread_id}")
             
             # Get all files from thread history to attach to the message
+            print("📎 [PROCESS_MESSAGE] Getting thread files for attachment")
             thread_files = get_thread_files(thread_id)
             file_ids_to_attach = []
             
             # Add current file if present
             if file_id:
                 file_ids_to_attach.append(file_id)
-                print(f"📎 Adding current file: {file_id}")
+                print(f"📎 [PROCESS_MESSAGE] Adding current file: {file_id}")
             
             # Add files from thread history (so AI can reference previous files)
             for file_info in thread_files:
                 if file_info['file_id'] not in file_ids_to_attach:
                     file_ids_to_attach.append(file_info['file_id'])
-                    print(f"📎 Adding historical file: {file_info['file_id']}")
+                    print(f"📎 [PROCESS_MESSAGE] Adding historical file: {file_info['file_id']}")
             
             # Add user message to thread with all relevant files
+            print(f"💬 [PROCESS_MESSAGE] Creating message in OpenAI thread")
             if file_ids_to_attach:
                 # Handle message with file attachments
-                print(f"🔧 Creating message with {len(file_ids_to_attach)} files: {file_ids_to_attach}")
+                print(f"🔧 [PROCESS_MESSAGE] Creating message with {len(file_ids_to_attach)} files: {file_ids_to_attach}")
                 try:
                     # Use the correct API format for file attachments
                     openai_client.beta.threads.messages.create(
@@ -932,67 +1058,85 @@ Please provide a clean, readable response without any source citations or format
                         content=message or "Please analyze this file",
                         attachments=[{"file_id": file_id, "tools": [{"type": "file_search"}]} for file_id in file_ids_to_attach]
                     )
-                    print(f"✅ Message created successfully with files")
+                    print(f"✅ [PROCESS_MESSAGE] Message created successfully with files")
                 except Exception as msg_error:
-                    print(f"❌ Error creating message with files: {msg_error}")
+                    print(f"❌ [PROCESS_MESSAGE] Error creating message with files: {msg_error}")
                     # Fallback to message without files
                     openai_client.beta.threads.messages.create(
                         thread_id=thread_id,
                         role="user",
                         content=message or "Please analyze this file"
                     )
-                    print(f"✅ Message created without files (fallback)")
+                    print(f"✅ [PROCESS_MESSAGE] Message created without files (fallback)")
             else:
                 # Handle text message only
+                print("💬 [PROCESS_MESSAGE] Creating text-only message")
                 openai_client.beta.threads.messages.create(
                     thread_id=thread_id,
                     role="user",
                     content=message
                 )
+                print("✅ [PROCESS_MESSAGE] Text message created")
             
             # Run the assistant
+            print(f"🤖 [PROCESS_MESSAGE] Starting assistant run with assistant_id: {assistant_id}")
             run = openai_client.beta.threads.runs.create(
                 thread_id=thread_id,
                 assistant_id=assistant_id
             )
+            print(f"🤖 [PROCESS_MESSAGE] Assistant run started: {run.id}")
             
             # Wait for the run to complete
+            print("⏳ [PROCESS_MESSAGE] Waiting for assistant run to complete")
             while True:
                 run_status = openai_client.beta.threads.runs.retrieve(
                     thread_id=thread_id,
                     run_id=run.id
                 )
                 
+                print(f"⏳ [PROCESS_MESSAGE] Run status: {run_status.status}")
+                
                 if run_status.status == 'completed':
+                    print("✅ [PROCESS_MESSAGE] Assistant run completed")
                     break
                 elif run_status.status == 'failed':
-                    raise Exception("Assistant run failed")
+                    print(f"❌ [PROCESS_MESSAGE] Assistant run failed: {run_status.last_error}")
+                    raise Exception(f"Assistant run failed: {run_status.last_error}")
                 elif run_status.status == 'requires_action':
+                    print(f"⚠️ [PROCESS_MESSAGE] Assistant requires action: {run_status.required_action}")
                     raise Exception("Assistant requires action")
                 
                 import time
                 time.sleep(1)  # Wait 1 second before checking again
             
             # Get the assistant's response
+            print("📋 [PROCESS_MESSAGE] Retrieving assistant response")
             messages = openai_client.beta.threads.messages.list(thread_id=thread_id)
             assistant_response = messages.data[0].content[0].text.value
+            print(f"📋 [PROCESS_MESSAGE] Raw assistant response length: {len(assistant_response)}")
             
             # Clean up the response to remove formatting artifacts and citations
+            print("🧹 [PROCESS_MESSAGE] Cleaning assistant response")
             assistant_response = clean_response_text(assistant_response)
+            print(f"🧹 [PROCESS_MESSAGE] Cleaned response length: {len(assistant_response)}")
             
         except Exception as e:
-            print(f"OpenAI Assistants API error: {e}")
-            print(f"Error type: {type(e)}")
-            print(f"Error details: {str(e)}")
+            print(f"❌ [PROCESS_MESSAGE] OpenAI Assistants API error: {e}")
+            print(f"❌ [PROCESS_MESSAGE] Error type: {type(e)}")
+            print(f"❌ [PROCESS_MESSAGE] Error details: {str(e)}")
             import traceback
-            print(f"Traceback: {traceback.format_exc()}")
+            print(f"❌ [PROCESS_MESSAGE] OpenAI error traceback: {traceback.format_exc()}")
             return jsonify({'error': f'Failed to get response from OpenAI Assistant: {str(e)}'}), 500
         
         # Save assistant response to database
+        print("💾 [PROCESS_MESSAGE] Saving assistant response to database")
         try:
             save_message_to_db(thread_id, 'assistant', assistant_response, None, None, None)
+            print("✅ [PROCESS_MESSAGE] Assistant response saved to database")
         except Exception as e:
-            print(f"Failed to save assistant response to database: {e}")
+            print(f"❌ [PROCESS_MESSAGE] Failed to save assistant response to database: {e}")
+            import traceback
+            print(f"❌ [PROCESS_MESSAGE] Database save error traceback: {traceback.format_exc()}")
         
         response_data = {
             'response': assistant_response,
@@ -1007,10 +1151,15 @@ Please provide a clean, readable response without any source citations or format
             response_data['file_id'] = file_id
             response_data['filename'] = file_upload.filename if file_upload else 'Unknown'
         
+        print(f"✅ [PROCESS_MESSAGE] Request processing completed successfully at {datetime.now()}")
+        print(f"📊 [PROCESS_MESSAGE] Response data keys: {list(response_data.keys())}")
+        
         return jsonify(response_data), 200
         
     except Exception as e:
-        print(f"Error processing message: {e}")
+        print(f"❌ [PROCESS_MESSAGE] Unexpected error processing message: {e}")
+        import traceback
+        print(f"❌ [PROCESS_MESSAGE] Unexpected error traceback: {traceback.format_exc()}")
         return jsonify({'error': 'Failed to process message'}), 500
 
 @app.route('/health', methods=['GET'])
