@@ -2,6 +2,42 @@
 """
 Burdy's Auto Detail Chatbot API
 Backend API with MySQL and OpenAI integration
+
+Features:
+- Text message processing with OpenAI Assistants API
+- File upload support (txt, pdf, doc, docx, png, jpg, jpeg, gif)
+- File persistence and retrieval across conversations
+- Thread-based conversation management
+- MySQL database persistence for messages and files
+- Session management
+
+API Endpoints:
+- POST /process_message - Process text messages or file uploads (supports both JSON and multipart form data)
+- GET /files/<file_id> - Get file information
+- DELETE /files/<file_id> - Delete files from OpenAI
+- GET /conversation/<thread_id> - Get conversation history with files
+- GET /thread/<thread_id>/files - Get all files for a thread
+- GET /threads/<session_id> - Get user threads
+- DELETE /thread/<thread_id> - Delete a thread
+- GET /health - Health check
+- GET /ping - Simple ping endpoint
+
+Payload for /process_message:
+
+JSON Format:
+{
+    "message": "Optional text message",
+    "session_id": "User session ID",
+    "thread_id": "Optional thread ID for continuing conversation"
+}
+
+Multipart Form Data:
+- message: "Optional text message"
+- session_id: "User session ID"
+- thread_id: "Optional thread ID for continuing conversation"
+- fileUpload: "File to upload and process"
+
+Note: Either message or fileUpload must be provided, but both are optional.
 """
 
 import os
@@ -129,7 +165,7 @@ def init_database():
             )
         """)
         
-        # Create messages table
+        # Create messages table with file support
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS messages (
                 id INT AUTO_INCREMENT PRIMARY KEY,
@@ -137,10 +173,31 @@ def init_database():
                 thread_id VARCHAR(255) NOT NULL,
                 role ENUM('user', 'assistant') NOT NULL,
                 content TEXT NOT NULL,
+                file_id VARCHAR(255) DEFAULT NULL,
+                filename VARCHAR(255) DEFAULT NULL,
+                file_size INT DEFAULT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
                 INDEX idx_thread_id (thread_id),
-                INDEX idx_conversation_id (conversation_id)
+                INDEX idx_conversation_id (conversation_id),
+                INDEX idx_file_id (file_id)
+            )
+        """)
+        
+        # Create files table for file metadata
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS files (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                file_id VARCHAR(255) UNIQUE NOT NULL,
+                filename VARCHAR(255) NOT NULL,
+                file_size INT NOT NULL,
+                file_type VARCHAR(50) NOT NULL,
+                thread_id VARCHAR(255) NOT NULL,
+                session_id VARCHAR(255) NOT NULL,
+                uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                INDEX idx_file_id (file_id),
+                INDEX idx_thread_id (thread_id),
+                INDEX idx_session_id (session_id)
             )
         """)
         
@@ -251,8 +308,8 @@ def get_or_create_thread(session_id, thread_id=None):
         print(f"Error in get_or_create_thread: {e}")
         return None
 
-def save_message_to_db(thread_id, role, content):
-    """Save message to MySQL database with thread_id"""
+def save_message_to_db(thread_id, role, content, file_id=None, filename=None, file_size=None):
+    """Save message to MySQL database with thread_id and optional file information"""
     connection = get_mysql_connection()
     if not connection:
         return None
@@ -270,10 +327,10 @@ def save_message_to_db(thread_id, role, content):
         
         conversation_id = result[0]
         
-        # Save message with thread_id
+        # Save message with thread_id and file information
         cursor.execute(
-            "INSERT INTO messages (conversation_id, thread_id, role, content) VALUES (%s, %s, %s, %s)",
-            (conversation_id, thread_id, role, content)
+            "INSERT INTO messages (conversation_id, thread_id, role, content, file_id, filename, file_size) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+            (conversation_id, thread_id, role, content, file_id, filename, file_size)
         )
         
         connection.commit()
@@ -285,6 +342,55 @@ def save_message_to_db(thread_id, role, content):
         print(f"Error saving message to database: {e}")
         return None
 
+def save_file_to_db(file_id, filename, file_size, file_type, thread_id, session_id):
+    """Save file metadata to MySQL database"""
+    connection = get_mysql_connection()
+    if not connection:
+        return None
+    
+    try:
+        cursor = connection.cursor()
+        
+        # Save file metadata
+        cursor.execute(
+            "INSERT INTO files (file_id, filename, file_size, file_type, thread_id, session_id) VALUES (%s, %s, %s, %s, %s, %s)",
+            (file_id, filename, file_size, file_type, thread_id, session_id)
+        )
+        
+        connection.commit()
+        cursor.close()
+        connection.close()
+        return True
+        
+    except Error as e:
+        print(f"Error saving file to database: {e}")
+        return None
+
+def get_thread_files(thread_id):
+    """Get all files associated with a thread"""
+    connection = get_mysql_connection()
+    if not connection:
+        return []
+    
+    try:
+        cursor = connection.cursor(dictionary=True)
+        
+        cursor.execute("""
+            SELECT file_id, filename, file_size, file_type, uploaded_at 
+            FROM files 
+            WHERE thread_id = %s 
+            ORDER BY uploaded_at ASC
+        """, (thread_id,))
+        
+        files = cursor.fetchall()
+        cursor.close()
+        connection.close()
+        return files
+        
+    except Error as e:
+        print(f"Error getting thread files: {e}")
+        return []
+
 def get_conversation_history(thread_id):
     """Get conversation history from database for a specific thread"""
     connection = get_mysql_connection()
@@ -295,7 +401,7 @@ def get_conversation_history(thread_id):
         cursor = connection.cursor(dictionary=True)
         
         cursor.execute("""
-            SELECT m.role, m.content, m.created_at 
+            SELECT m.role, m.content, m.file_id, m.filename, m.file_size, m.created_at 
             FROM messages m 
             WHERE m.thread_id = %s 
             ORDER BY m.created_at ASC
@@ -361,13 +467,24 @@ def ping():
 def process_message():
     """Process chat message with OpenAI and save to MySQL with thread support"""
     try:
-        data = request.json
-        message = data.get('message')
-        session_id = data.get('session_id', 'default_session')
-        thread_id = data.get('thread_id')  # Can be None for new conversations
+        # Handle both JSON and multipart form data
+        if request.content_type and 'multipart/form-data' in request.content_type:
+            # Handle file upload in multipart form
+            message = request.form.get('message')
+            session_id = request.form.get('session_id', 'default_session')
+            thread_id = request.form.get('thread_id')
+            file_upload = request.files.get('fileUpload')  # File object
+        else:
+            # Handle JSON payload
+            data = request.json
+            message = data.get('message')
+            session_id = data.get('session_id', 'default_session')
+            thread_id = data.get('thread_id')
+            file_upload = None
         
-        if not message:
-            return jsonify({'error': 'Message is required'}), 400
+        # Validate that either message or fileUpload is provided
+        if not message and not file_upload:
+            return jsonify({'error': 'Either message or fileUpload is required'}), 400
         
         # Get or create thread
         thread_info = get_or_create_thread(session_id, thread_id)
@@ -376,9 +493,48 @@ def process_message():
         
         thread_id = thread_info['thread_id']
         
-        # Save user message to database
+        # Handle file upload if present
+        file_id = None
+        if file_upload:
+            try:
+                # Validate file type and size
+                allowed_extensions = {'txt', 'pdf', 'doc', 'docx', 'png', 'jpg', 'jpeg', 'gif'}
+                file_extension = file_upload.filename.rsplit('.', 1)[1].lower() if '.' in file_upload.filename else ''
+                
+                if file_extension not in allowed_extensions:
+                    return jsonify({'error': f'File type not allowed. Allowed types: {", ".join(allowed_extensions)}'}), 400
+                
+                # Check file size (max 20MB for OpenAI)
+                file_upload.seek(0, 2)  # Seek to end
+                file_size = file_upload.tell()
+                file_upload.seek(0)  # Reset to beginning
+                
+                if file_size > 20 * 1024 * 1024:  # 20MB limit
+                    return jsonify({'error': 'File size too large. Maximum size is 20MB'}), 400
+                
+                # Upload file to OpenAI
+                openai_client = get_openai_client()
+                uploaded_file = openai_client.files.create(
+                    file=file_upload,
+                    purpose="assistants"
+                )
+                file_id = uploaded_file.id
+                print(f"✅ File uploaded successfully: {file_upload.filename} -> {file_id}")
+                
+                # Save file metadata to database
+                file_extension = file_upload.filename.rsplit('.', 1)[1].lower() if '.' in file_upload.filename else ''
+                save_file_to_db(file_id, file_upload.filename, file_size, file_extension, thread_id, session_id)
+                
+            except Exception as e:
+                print(f"File upload error: {e}")
+                return jsonify({'error': 'Failed to upload file to OpenAI'}), 500
+        
+        # Prepare content for database and OpenAI
+        user_content = message if message else f"File uploaded: {file_upload.filename if file_upload else 'Unknown file'}"
+        
+        # Save user message to database with file information
         try:
-            save_message_to_db(thread_id, 'user', message)
+            save_message_to_db(thread_id, 'user', user_content, file_id, file_upload.filename if file_upload else None, file_size if file_upload else None)
             # Get conversation history for context
             history = get_conversation_history(thread_id)
         except Exception as e:
@@ -409,12 +565,36 @@ def process_message():
                     thread = openai_client.beta.threads.create()
                     thread_id = thread.id
             
-            # Add user message to thread
-            openai_client.beta.threads.messages.create(
-                thread_id=thread_id,
-                role="user",
-                content=message
-            )
+            # Get all files from thread history to attach to the message
+            thread_files = get_thread_files(thread_id)
+            file_ids_to_attach = []
+            
+            # Add current file if present
+            if file_id:
+                file_ids_to_attach.append(file_id)
+            
+            # Add files from thread history (so AI can reference previous files)
+            for file_info in thread_files:
+                if file_info['file_id'] not in file_ids_to_attach:
+                    file_ids_to_attach.append(file_info['file_id'])
+            
+            # Add user message to thread with all relevant files
+            if file_ids_to_attach:
+                # Handle message with file attachments
+                openai_client.beta.threads.messages.create(
+                    thread_id=thread_id,
+                    role="user",
+                    content=message or "Please analyze this file",
+                    file_ids=file_ids_to_attach
+                )
+                print(f"📎 Attached {len(file_ids_to_attach)} files to message: {file_ids_to_attach}")
+            else:
+                # Handle text message only
+                openai_client.beta.threads.messages.create(
+                    thread_id=thread_id,
+                    role="user",
+                    content=message
+                )
             
             # Run the assistant
             run = openai_client.beta.threads.runs.create(
@@ -449,16 +629,24 @@ def process_message():
         
         # Save assistant response to database
         try:
-            save_message_to_db(thread_id, 'assistant', assistant_response)
+            save_message_to_db(thread_id, 'assistant', assistant_response, None, None, None)
         except Exception as e:
             print(f"Failed to save assistant response to database: {e}")
         
-        return jsonify({
+        response_data = {
             'response': assistant_response,
             'session_id': session_id,
             'thread_id': thread_id,
             'timestamp': datetime.now().isoformat()
-        }), 200
+        }
+        
+        # Add file information if a file was uploaded
+        if file_id:
+            response_data['file_uploaded'] = True
+            response_data['file_id'] = file_id
+            response_data['filename'] = file_upload.filename if file_upload else 'Unknown'
+        
+        return jsonify(response_data), 200
         
     except Exception as e:
         print(f"Error processing message: {e}")
@@ -544,12 +732,26 @@ def get_conversation(thread_id):
     """Get conversation history for a specific thread"""
     try:
         messages = get_conversation_history(thread_id)
+        files = get_thread_files(thread_id)
         return jsonify({
             'thread_id': thread_id,
-            'messages': messages
+            'messages': messages,
+            'files': files
         }), 200
     except Exception as e:
         return jsonify({'error': 'Failed to get conversation'}), 500
+
+@app.route('/thread/<thread_id>/files', methods=['GET'])
+def get_thread_files_endpoint(thread_id):
+    """Get all files associated with a specific thread"""
+    try:
+        files = get_thread_files(thread_id)
+        return jsonify({
+            'thread_id': thread_id,
+            'files': files
+        }), 200
+    except Exception as e:
+        return jsonify({'error': 'Failed to get thread files'}), 500
 
 @app.route('/threads/<session_id>', methods=['GET'])
 def get_threads(session_id):
@@ -562,6 +764,45 @@ def get_threads(session_id):
         }), 200
     except Exception as e:
         return jsonify({'error': 'Failed to get threads'}), 500
+
+
+
+@app.route('/files/<file_id>', methods=['DELETE'])
+def delete_file(file_id):
+    """Delete a file from OpenAI"""
+    try:
+        openai_client = get_openai_client()
+        openai_client.files.delete(file_id)
+        
+        return jsonify({
+            'message': 'File deleted successfully',
+            'file_id': file_id,
+            'timestamp': datetime.now().isoformat()
+        }), 200
+        
+    except Exception as e:
+        print(f"File deletion error: {e}")
+        return jsonify({'error': 'Failed to delete file'}), 500
+
+@app.route('/files/<file_id>', methods=['GET'])
+def get_file_info(file_id):
+    """Get information about a specific file"""
+    try:
+        openai_client = get_openai_client()
+        file_info = openai_client.files.retrieve(file_id)
+        
+        return jsonify({
+            'file_id': file_info.id,
+            'filename': file_info.filename,
+            'size': file_info.bytes,
+            'purpose': file_info.purpose,
+            'created_at': file_info.created_at,
+            'timestamp': datetime.now().isoformat()
+        }), 200
+        
+    except Exception as e:
+        print(f"File info retrieval error: {e}")
+        return jsonify({'error': 'Failed to get file information'}), 500
 
 @app.route('/thread/<thread_id>', methods=['DELETE'])
 def delete_thread(thread_id):
