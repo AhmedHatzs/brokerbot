@@ -881,6 +881,7 @@ def process_message():
             print(f"🌐 [PROCESS_MESSAGE] Processing file URL: {file_url}")
             downloaded_file, downloaded_filename, content_type = download_file_from_url(file_url)
             if downloaded_file:
+                print(f"✅ [PROCESS_MESSAGE] File downloaded from URL: {downloaded_filename}")
                 # Create a file-like object that mimics Flask's file upload
                 class DownloadedFile:
                     def __init__(self, file_obj, filename, content_type):
@@ -890,18 +891,14 @@ def process_message():
                         self.file.seek(0, 2)  # Seek to end to get size
                         self.size = self.file.tell()
                         self.file.seek(0)  # Reset to beginning
-                    
                     def seek(self, offset, whence=0):
                         return self.file.seek(offset, whence)
-                    
                     def tell(self):
                         return self.file.tell()
-                    
                     def read(self, size=None):
                         return self.file.read(size)
-                
                 file_upload = DownloadedFile(downloaded_file, downloaded_filename, content_type)
-                print(f"✅ [PROCESS_MESSAGE] File downloaded from URL: {downloaded_filename}")
+                print(f"✅ [PROCESS_MESSAGE] Downloaded file object created: {file_upload.filename}, size: {file_upload.size}")
             else:
                 print(f"❌ [PROCESS_MESSAGE] Failed to download file from URL: {file_url}")
                 return jsonify({'error': f'Failed to download file from URL: {file_url}'}), 400
@@ -932,71 +929,35 @@ def process_message():
             try:
                 # Define supported file types (all will use OCR)
                 supported_extensions = {'txt', 'pdf', 'doc', 'docx', 'md', 'png', 'jpg', 'jpeg', 'gif', 'bmp', 'tiff'}
-                
                 file_extension = file_upload.filename.rsplit('.', 1)[1].lower() if '.' in file_upload.filename else ''
                 print(f"📄 [PROCESS_MESSAGE] File extension: {file_extension}")
-                
                 if file_extension not in supported_extensions:
                     print(f"❌ [PROCESS_MESSAGE] Unsupported file type: {file_extension}")
                     return jsonify({'error': f'File type not supported. Supported types: {", ".join(supported_extensions)}'}), 400
-                
                 # Check file size (max 20MB for OpenAI)
                 file_upload.seek(0, 2)  # Seek to end
                 file_size = file_upload.tell()
                 file_upload.seek(0)  # Reset to beginning
                 print(f"📄 [PROCESS_MESSAGE] File size: {file_size} bytes")
-                
                 if file_size > 20 * 1024 * 1024:  # 20MB limit
                     print(f"❌ [PROCESS_MESSAGE] File too large: {file_size} bytes")
                     return jsonify({'error': 'File size too large. Maximum size is 20MB'}), 400
-                
                 # Process all files using OCR
                 print(f"📄 [PROCESS_MESSAGE] Starting OCR text extraction for: {file_upload.filename}")
-                
                 # Extract text from file using OCR
                 extracted_text = extract_text_from_file(file_upload, file_upload.filename)
-                
                 if extracted_text:
                     print(f"✅ [PROCESS_MESSAGE] Text extraction successful: {len(extracted_text)} characters")
-                    
-                    # Create a temporary text file with extracted content for OpenAI
-                    print("📄 [PROCESS_MESSAGE] Creating temporary file for OpenAI upload")
-                    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as temp_file:
-                        temp_file.write(extracted_text)
-                        temp_file_path = temp_file.name
-                    
-                    try:
-                        # Upload the extracted text as a text file to OpenAI
-                        print("📄 [PROCESS_MESSAGE] Uploading extracted text to OpenAI")
-                        openai_client = get_openai_client()
-                        
-                        with open(temp_file_path, 'rb') as text_file:
-                            file_obj = io.BytesIO(text_file.read())
-                            file_obj.name = f"{file_upload.filename}_extracted.txt"
-                            
-                            uploaded_file = openai_client.files.create(
-                                file=file_obj,
-                                purpose="assistants"
-                            )
-                            file_id = uploaded_file.id
-                            print(f"✅ [PROCESS_MESSAGE] File uploaded to OpenAI: {file_id}")
-                            
-                    finally:
-                        # Clean up temporary file
-                        if os.path.exists(temp_file_path):
-                            os.unlink(temp_file_path)
-                            print("🧹 [PROCESS_MESSAGE] Temporary file cleaned up")
+                    # SKIP: Uploading extracted text to OpenAI as a file
+                    file_id = None  # No file_id for OpenAI
                 else:
                     print("❌ [PROCESS_MESSAGE] Text extraction failed")
                     return jsonify({'error': 'Failed to extract text from file. Please ensure the file contains readable text.'}), 400
-                
                 print(f"📊 [PROCESS_MESSAGE] File processing complete - size: {file_size} bytes, type: {file_extension}")
-                
                 # Save file metadata to database
                 print("💾 [PROCESS_MESSAGE] Saving file metadata to database")
                 save_file_to_db(file_id, file_upload.filename, file_size, file_extension, thread_id, session_id)
                 print("✅ [PROCESS_MESSAGE] File metadata saved to database")
-                
             except Exception as e:
                 print(f"❌ [PROCESS_MESSAGE] File upload error: {e}")
                 print(f"📄 [PROCESS_MESSAGE] File details - Name: {file_upload.filename}, Size: {file_size}, Type: {file_extension}")
@@ -1008,14 +969,7 @@ def process_message():
         print("📝 [PROCESS_MESSAGE] Preparing content for processing")
         if file_upload and extracted_text:
             # For all files, include the extracted text in the user message with clear instructions
-            user_content = f"""File uploaded: {file_upload.filename}
-
-Extracted text from file:
-{extracted_text}
-
-{message if message else 'Please analyze this text and provide a clear, professional response without any formatting artifacts or citations.'}
-
-Please provide a clean, readable response without any source citations or formatting artifacts."""
+            user_content = f"""File uploaded: {file_upload.filename}\n\nExtracted text from file:\n{extracted_text}\n\n{message if message else 'Please analyze this text and provide a clear, professional response without any formatting artifacts or citations.'}\n\nPlease provide a clean, readable response without any source citations or formatting artifacts."""
             print(f"📝 [PROCESS_MESSAGE] Prepared content with file: {len(user_content)} characters")
         else:
             user_content = message if message else f"File uploaded: {file_upload.filename if file_upload else 'Unknown file'}"
@@ -1024,7 +978,7 @@ Please provide a clean, readable response without any source citations or format
         # Save user message to database with file information
         print("💾 [PROCESS_MESSAGE] Saving user message to database")
         try:
-            save_message_to_db(thread_id, 'user', user_content, file_id, file_upload.filename if file_upload else None, file_size if file_upload else None)
+            save_message_to_db(thread_id, 'user', user_content, None, file_upload.filename if file_upload else None, file_size if file_upload else None)
             print("✅ [PROCESS_MESSAGE] User message saved to database")
             # Get conversation history for context
             history = get_conversation_history(thread_id)
@@ -1041,12 +995,10 @@ Please provide a clean, readable response without any source citations or format
             if not assistant_id:
                 print("❌ [PROCESS_MESSAGE] OpenAI Assistant ID not configured")
                 return jsonify({'error': 'OpenAI Assistant ID not configured'}), 500
-            
             # Get client with beta headers
             openai_client = get_openai_client()
             print(f"🔧 [PROCESS_MESSAGE] OpenAI client created with headers: {openai_client._client.headers.get('OpenAI-Beta', 'NOT SET')}")
             print(f"🔧 [PROCESS_MESSAGE] All headers: {dict(openai_client._client.headers)}")
-            
             # Create or get thread for this conversation
             if not thread_id:
                 # Create new thread
@@ -1072,55 +1024,14 @@ Please provide a clean, readable response without any source citations or format
                         thread = openai_client.beta.threads.create()
                         thread_id = thread.id
                         print(f"🆕 [PROCESS_MESSAGE] Created new OpenAI thread: {thread_id}")
-            
-            # Get all files from thread history to attach to the message
-            print("📎 [PROCESS_MESSAGE] Getting thread files for attachment")
-            thread_files = get_thread_files(thread_id)
-            file_ids_to_attach = []
-            
-            # Add current file if present
-            if file_id:
-                file_ids_to_attach.append(file_id)
-                print(f"📎 [PROCESS_MESSAGE] Adding current file: {file_id}")
-            
-            # Add files from thread history (so AI can reference previous files)
-            for file_info in thread_files:
-                if file_info['file_id'] not in file_ids_to_attach:
-                    file_ids_to_attach.append(file_info['file_id'])
-                    print(f"📎 [PROCESS_MESSAGE] Adding historical file: {file_info['file_id']}")
-            
-            # Add user message to thread with all relevant files
-            print(f"💬 [PROCESS_MESSAGE] Creating message in OpenAI thread")
-            if file_ids_to_attach:
-                # Handle message with file attachments
-                print(f"🔧 [PROCESS_MESSAGE] Creating message with {len(file_ids_to_attach)} files: {file_ids_to_attach}")
-                try:
-                    # Use the correct API format for file attachments
-                    openai_client.beta.threads.messages.create(
-                        thread_id=thread_id,
-                        role="user",
-                        content=message or "Please analyze this file",
-                        attachments=[{"file_id": file_id, "tools": [{"type": "file_search"}]} for file_id in file_ids_to_attach]
-                    )
-                    print(f"✅ [PROCESS_MESSAGE] Message created successfully with files")
-                except Exception as msg_error:
-                    print(f"❌ [PROCESS_MESSAGE] Error creating message with files: {msg_error}")
-                    # Fallback to message without files
-                    openai_client.beta.threads.messages.create(
-                        thread_id=thread_id,
-                        role="user",
-                        content=message or "Please analyze this file"
-                    )
-                    print(f"✅ [PROCESS_MESSAGE] Message created without files (fallback)")
-            else:
-                # Handle text message only
-                print("💬 [PROCESS_MESSAGE] Creating text-only message")
-                openai_client.beta.threads.messages.create(
-                    thread_id=thread_id,
-                    role="user",
-                    content=message
-                )
-                print("✅ [PROCESS_MESSAGE] Text message created")
+            # Only send the user_content as the message, do not attach files
+            print("💬 [PROCESS_MESSAGE] Creating text-only message (no file attachments)")
+            openai_client.beta.threads.messages.create(
+                thread_id=thread_id,
+                role="user",
+                content=user_content
+            )
+            print("✅ [PROCESS_MESSAGE] Text message created")
             
             # Run the assistant
             print(f"🤖 [PROCESS_MESSAGE] Starting assistant run with assistant_id: {assistant_id}")
