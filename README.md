@@ -290,9 +290,22 @@ Production mode (Railway) uses:
 
 - **Single gunicorn worker** for Railway resource constraints
 - **Database connection pooling** for efficient MySQL connections
+- **OpenAI Thread System** for minimal token usage and conversation context
 - **Conversation history limiting** (last 10 messages for context)
+- **Optimized polling intervals** (0.5s) for faster response detection
+- **Thread mapping system** to reuse OpenAI threads and maintain context
 - **Railway-optimized timeouts** and health checks
 - **Preloaded application** for faster startup
+
+### 🧠 OpenAI Thread Optimization
+
+The system uses OpenAI's thread system to minimize token usage:
+
+- **Thread Reuse**: Each conversation maintains a persistent OpenAI thread
+- **Context Preservation**: Conversation history is synced to OpenAI threads
+- **Minimal Token Usage**: Only new messages are sent, not entire conversation history
+- **Faster Responses**: Reduced polling intervals and optimized run settings
+- **Smart Sync**: Only syncs missing messages to avoid duplication
 
 ## 🚨 Troubleshooting
 

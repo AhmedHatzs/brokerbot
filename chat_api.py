@@ -750,6 +750,167 @@ def get_user_threads(session_id):
         print(f"Error getting user threads: {e}")
         return []
 
+def get_or_create_openai_thread_mapping(database_thread_id, openai_thread_id):
+    """
+    Store mapping between database thread ID and OpenAI thread ID for conversation continuity
+    
+    Args:
+        database_thread_id: The thread ID used in our database
+        openai_thread_id: The thread ID used in OpenAI
+        
+    Returns:
+        bool: True if mapping was stored successfully
+    """
+    connection = get_mysql_connection()
+    if not connection:
+        return False
+    
+    try:
+        cursor = connection.cursor()
+        
+        # Check if conversations table has openai_thread_id column, if not add it
+        try:
+            cursor.execute("ALTER TABLE conversations ADD COLUMN openai_thread_id VARCHAR(255) DEFAULT NULL")
+            print("✅ Added openai_thread_id column to conversations table")
+        except Error as e:
+            if "Duplicate column name" not in str(e):
+                print(f"⚠️  Error adding openai_thread_id column: {e}")
+        
+        # Update the conversation record with the OpenAI thread ID
+        cursor.execute("""
+            UPDATE conversations 
+            SET openai_thread_id = %s 
+            WHERE thread_id = %s
+        """, (openai_thread_id, database_thread_id))
+        
+        connection.commit()
+        cursor.close()
+        connection.close()
+        print(f"✅ [THREAD_MAPPING] Mapped database thread {database_thread_id} to OpenAI thread {openai_thread_id}")
+        return True
+        
+    except Error as e:
+        print(f"❌ [THREAD_MAPPING] Error storing thread mapping: {e}")
+        return False
+
+def get_openai_thread_id(database_thread_id):
+    """
+    Get the OpenAI thread ID for a given database thread ID
+    
+    Args:
+        database_thread_id: The thread ID used in our database
+        
+    Returns:
+        str or None: The OpenAI thread ID if found, None otherwise
+    """
+    connection = get_mysql_connection()
+    if not connection:
+        return None
+    
+    try:
+        cursor = connection.cursor()
+        
+        # Try to get the OpenAI thread ID
+        try:
+            cursor.execute("""
+                SELECT openai_thread_id 
+                FROM conversations 
+                WHERE thread_id = %s AND openai_thread_id IS NOT NULL
+            """, (database_thread_id,))
+            result = cursor.fetchone()
+            
+            if result:
+                openai_thread_id = result[0]
+                print(f"✅ [THREAD_MAPPING] Found OpenAI thread ID: {openai_thread_id} for database thread: {database_thread_id}")
+                return openai_thread_id
+            else:
+                print(f"⚠️ [THREAD_MAPPING] No OpenAI thread ID found for database thread: {database_thread_id}")
+                return None
+                
+        except Error as e:
+            if "Unknown column" in str(e):
+                print("⚠️ [THREAD_MAPPING] openai_thread_id column doesn't exist yet")
+                return None
+            else:
+                raise e
+        
+        cursor.close()
+        connection.close()
+        
+    except Error as e:
+        print(f"❌ [THREAD_MAPPING] Error getting OpenAI thread ID: {e}")
+        return None
+
+def sync_conversation_history_to_openai(openai_client, openai_thread_id, database_thread_id, max_messages=10):
+    """
+    Sync conversation history from database to OpenAI thread for context continuity
+    This ensures OpenAI has the conversation context without sending it in every request
+    
+    Args:
+        openai_client: OpenAI client instance
+        openai_thread_id: The OpenAI thread ID
+        database_thread_id: The database thread ID
+        max_messages: Maximum number of recent messages to sync (default 10)
+        
+    Returns:
+        bool: True if sync was successful, False otherwise
+    """
+    print(f"🔄 [SYNC_HISTORY] Starting conversation history sync for OpenAI thread: {openai_thread_id}")
+    
+    try:
+        # Get recent conversation history from database
+        history = get_conversation_history(database_thread_id)
+        
+        if not history:
+            print("📋 [SYNC_HISTORY] No conversation history found in database")
+            return True
+        
+        # Limit to recent messages to avoid token bloat
+        recent_history = history[-max_messages:] if len(history) > max_messages else history
+        print(f"📋 [SYNC_HISTORY] Syncing {len(recent_history)} recent messages to OpenAI thread")
+        
+        # Get existing messages in OpenAI thread
+        existing_messages = openai_client.beta.threads.messages.list(thread_id=openai_thread_id)
+        existing_count = len(existing_messages.data)
+        print(f"📋 [SYNC_HISTORY] OpenAI thread currently has {existing_count} messages")
+        
+        # Only sync if we have more recent messages than what's in OpenAI
+        if len(recent_history) <= existing_count:
+            print("📋 [SYNC_HISTORY] OpenAI thread already has recent conversation history, skipping sync")
+            return True
+        
+        # Add missing messages to OpenAI thread (only user messages for context)
+        messages_added = 0
+        for message in recent_history:
+            if message['role'] == 'user' and messages_added < max_messages:
+                try:
+                    # Check if this message already exists in OpenAI thread
+                    message_exists = any(
+                        msg.content[0].text.value == message['content'] 
+                        for msg in existing_messages.data 
+                        if hasattr(msg.content[0], 'text')
+                    )
+                    
+                    if not message_exists:
+                        openai_client.beta.threads.messages.create(
+                            thread_id=openai_thread_id,
+                            role="user",
+                            content=message['content']
+                        )
+                        messages_added += 1
+                        print(f"📝 [SYNC_HISTORY] Added user message to OpenAI thread: {len(message['content'])} chars")
+                        
+                except Exception as e:
+                    print(f"⚠️ [SYNC_HISTORY] Failed to add message to OpenAI thread: {e}")
+                    continue
+        
+        print(f"✅ [SYNC_HISTORY] Successfully synced {messages_added} messages to OpenAI thread")
+        return True
+        
+    except Exception as e:
+        print(f"❌ [SYNC_HISTORY] Error syncing conversation history: {e}")
+        return False
+
 @app.route('/', methods=['GET'])
 def root():
     """Simple root endpoint for basic connectivity testing"""
@@ -980,14 +1141,10 @@ def process_message():
         try:
             save_message_to_db(thread_id, 'user', user_content, None, file_upload.filename if file_upload else None, file_size if file_upload else None)
             print("✅ [PROCESS_MESSAGE] User message saved to database")
-            # Get conversation history for context
-            history = get_conversation_history(thread_id)
-            print(f"📋 [PROCESS_MESSAGE] Retrieved conversation history: {len(history)} messages")
         except Exception as e:
             print(f"❌ [PROCESS_MESSAGE] Database operation failed: {e}")
             import traceback
             print(f"📋 [PROCESS_MESSAGE] Database error traceback: {traceback.format_exc()}")
-            history = []
         
         # Use OpenAI Assistants API
         print("🤖 [PROCESS_MESSAGE] Starting OpenAI Assistants API processing")
@@ -1000,52 +1157,83 @@ def process_message():
             print(f"🔧 [PROCESS_MESSAGE] OpenAI client created with headers: {openai_client._client.headers.get('OpenAI-Beta', 'NOT SET')}")
             print(f"🔧 [PROCESS_MESSAGE] All headers: {dict(openai_client._client.headers)}")
             # Create or get thread for this conversation
+            # Store the original database thread_id for saving responses
+            database_thread_id = thread_id
+            
             if not thread_id:
                 # Create new thread
                 print("🆕 [PROCESS_MESSAGE] Creating new OpenAI thread")
                 thread = openai_client.beta.threads.create()
-                thread_id = thread.id
-                print(f"🆕 [PROCESS_MESSAGE] Created new OpenAI thread: {thread_id}")
+                openai_thread_id = thread.id
+                print(f"🆕 [PROCESS_MESSAGE] Created new OpenAI thread: {openai_thread_id}")
             else:
-                # Use existing thread - check if it's a valid OpenAI thread ID
-                if not thread_id.startswith('thread_'):
-                    print(f"⚠️ [PROCESS_MESSAGE] Invalid thread ID format: {thread_id}, creating new OpenAI thread")
-                    thread = openai_client.beta.threads.create()
-                    thread_id = thread.id
-                    print(f"🆕 [PROCESS_MESSAGE] Created new OpenAI thread: {thread_id}")
-                else:
+                # Check if we have a stored OpenAI thread ID for this database thread
+                stored_openai_thread_id = get_openai_thread_id(thread_id)
+                
+                if stored_openai_thread_id:
+                    # Use the stored OpenAI thread ID
                     try:
-                        print(f"📋 [PROCESS_MESSAGE] Retrieving existing OpenAI thread: {thread_id}")
-                        thread = openai_client.beta.threads.retrieve(thread_id)
-                        print(f"📋 [PROCESS_MESSAGE] Retrieved existing OpenAI thread: {thread_id}")
+                        print(f"📋 [PROCESS_MESSAGE] Retrieving stored OpenAI thread: {stored_openai_thread_id}")
+                        thread = openai_client.beta.threads.retrieve(stored_openai_thread_id)
+                        openai_thread_id = stored_openai_thread_id
+                        print(f"📋 [PROCESS_MESSAGE] Retrieved existing OpenAI thread: {openai_thread_id}")
+                        
+                        # Sync conversation history to OpenAI thread for context continuity
+                        print("🔄 [PROCESS_MESSAGE] Syncing conversation history to OpenAI thread for context")
+                        sync_conversation_history_to_openai(openai_client, openai_thread_id, database_thread_id)
+                        
                     except Exception as e:
-                        print(f"⚠️ [PROCESS_MESSAGE] Thread {thread_id} not found in OpenAI, creating new one: {e}")
+                        print(f"⚠️ [PROCESS_MESSAGE] Stored thread {stored_openai_thread_id} not found in OpenAI, creating new one: {e}")
                         # Thread doesn't exist, create new one
                         thread = openai_client.beta.threads.create()
-                        thread_id = thread.id
-                        print(f"🆕 [PROCESS_MESSAGE] Created new OpenAI thread: {thread_id}")
+                        openai_thread_id = thread.id
+                        print(f"🆕 [PROCESS_MESSAGE] Created new OpenAI thread: {openai_thread_id}")
+                        # Store the new mapping
+                        get_or_create_openai_thread_mapping(database_thread_id, openai_thread_id)
+                        
+                        # Sync conversation history to the new thread
+                        print("🔄 [PROCESS_MESSAGE] Syncing conversation history to new OpenAI thread")
+                        sync_conversation_history_to_openai(openai_client, openai_thread_id, database_thread_id)
+                else:
+                    # No stored mapping, create new OpenAI thread
+                    print(f"🆕 [PROCESS_MESSAGE] No stored OpenAI thread for database thread {thread_id}, creating new one")
+                    thread = openai_client.beta.threads.create()
+                    openai_thread_id = thread.id
+                    print(f"🆕 [PROCESS_MESSAGE] Created new OpenAI thread: {openai_thread_id}")
+                    # Store the new mapping
+                    get_or_create_openai_thread_mapping(database_thread_id, openai_thread_id)
+                    
+                    # Sync conversation history to the new thread
+                    print("🔄 [PROCESS_MESSAGE] Syncing conversation history to new OpenAI thread")
+                    sync_conversation_history_to_openai(openai_client, openai_thread_id, database_thread_id)
             # Only send the user_content as the message, do not attach files
             print("💬 [PROCESS_MESSAGE] Creating text-only message (no file attachments)")
             openai_client.beta.threads.messages.create(
-                thread_id=thread_id,
+                thread_id=openai_thread_id,
                 role="user",
                 content=user_content
             )
             print("✅ [PROCESS_MESSAGE] Text message created")
             
-            # Run the assistant
+            # Run the assistant with optimized settings for faster responses
             print(f"🤖 [PROCESS_MESSAGE] Starting assistant run with assistant_id: {assistant_id}")
             run = openai_client.beta.threads.runs.create(
-                thread_id=thread_id,
-                assistant_id=assistant_id
+                thread_id=openai_thread_id,
+                assistant_id=assistant_id,
+                # Add instructions to keep responses concise for faster processing
+                instructions="Please provide a concise, helpful response. Keep it brief but informative."
             )
             print(f"🤖 [PROCESS_MESSAGE] Assistant run started: {run.id}")
             
-            # Wait for the run to complete
+            # Wait for the run to complete with optimized polling
             print("⏳ [PROCESS_MESSAGE] Waiting for assistant run to complete")
+            import time
+            max_wait_time = 30  # Maximum wait time in seconds
+            start_time = time.time()
+            
             while True:
                 run_status = openai_client.beta.threads.runs.retrieve(
-                    thread_id=thread_id,
+                    thread_id=openai_thread_id,
                     run_id=run.id
                 )
                 
@@ -1060,13 +1248,21 @@ def process_message():
                 elif run_status.status == 'requires_action':
                     print(f"⚠️ [PROCESS_MESSAGE] Assistant requires action: {run_status.required_action}")
                     raise Exception("Assistant requires action")
+                elif run_status.status == 'expired':
+                    print(f"❌ [PROCESS_MESSAGE] Assistant run expired")
+                    raise Exception("Assistant run expired")
                 
-                import time
-                time.sleep(1)  # Wait 1 second before checking again
+                # Check for timeout
+                elapsed_time = time.time() - start_time
+                if elapsed_time > max_wait_time:
+                    print(f"❌ [PROCESS_MESSAGE] Assistant run timed out after {max_wait_time} seconds")
+                    raise Exception(f"Assistant run timed out after {max_wait_time} seconds")
+                
+                time.sleep(0.5)  # Reduced polling interval for faster response detection
             
             # Get the assistant's response
             print("📋 [PROCESS_MESSAGE] Retrieving assistant response")
-            messages = openai_client.beta.threads.messages.list(thread_id=thread_id)
+            messages = openai_client.beta.threads.messages.list(thread_id=openai_thread_id)
             assistant_response = messages.data[0].content[0].text.value
             print(f"📋 [PROCESS_MESSAGE] Raw assistant response length: {len(assistant_response)}")
             
@@ -1083,10 +1279,10 @@ def process_message():
             print(f"❌ [PROCESS_MESSAGE] OpenAI error traceback: {traceback.format_exc()}")
             return jsonify({'error': f'Failed to get response from OpenAI Assistant: {str(e)}'}), 500
         
-        # Save assistant response to database
+        # Save assistant response to database using the original database thread_id
         print("💾 [PROCESS_MESSAGE] Saving assistant response to database")
         try:
-            save_message_to_db(thread_id, 'assistant', assistant_response, None, None, None)
+            save_message_to_db(database_thread_id, 'assistant', assistant_response, None, None, None)
             print("✅ [PROCESS_MESSAGE] Assistant response saved to database")
         except Exception as e:
             print(f"❌ [PROCESS_MESSAGE] Failed to save assistant response to database: {e}")
@@ -1096,7 +1292,7 @@ def process_message():
         response_data = {
             'response': assistant_response,
             'session_id': session_id,
-            'thread_id': thread_id,
+            'thread_id': database_thread_id,
             'timestamp': datetime.now().isoformat()
         }
         
