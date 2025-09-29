@@ -113,10 +113,12 @@ def get_mysql_config():
             'database': os.getenv('MYSQL_DATABASE'),
             'user': os.getenv('MYSQL_USER'),
             'password': os.getenv('MYSQL_PASSWORD'),
-            'connect_timeout': 30,  # Increased timeout for cloud connections
+            'connect_timeout': 30,  # Connection timeout
             'autocommit': True,
             'charset': 'utf8mb4',
-            'collation': 'utf8mb4_unicode_ci'
+            'collation': 'utf8mb4_unicode_ci',
+            'sql_mode': 'TRADITIONAL',
+            'init_command': "SET SESSION wait_timeout=28800, interactive_timeout=28800"  # 8 hours timeout
         }
         
         # Handle SSL configuration for Aiven Cloud
@@ -152,49 +154,44 @@ _connection_pool = None
 _pool_lock = threading.Lock()
 
 def get_mysql_connection():
-    """Get MySQL connection from pool or create new one"""
-    global _connection_pool
+    """Get MySQL connection - always create fresh connection for reliability"""
+    print(f"🔌 [GET_MYSQL_CONNECTION] Creating fresh database connection")
+    print(f"🔌 [GET_MYSQL_CONNECTION] Config host: {MYSQL_CONFIG.get('host')}")
+    print(f"🔌 [GET_MYSQL_CONNECTION] Config database: {MYSQL_CONFIG.get('database')}")
+    print(f"🔌 [GET_MYSQL_CONNECTION] Config port: {MYSQL_CONFIG.get('port')}")
     
-    # Try to get existing connection first
-    if _connection_pool and _connection_pool.is_connected():
-        print("🔄 [GET_MYSQL_CONNECTION] Reusing existing connection")
-        return _connection_pool
-    
-    with _pool_lock:
-        # Double-check after acquiring lock
-        if _connection_pool and _connection_pool.is_connected():
-            print("🔄 [GET_MYSQL_CONNECTION] Reusing existing connection (after lock)")
-            return _connection_pool
-            
-        print(f"🔌 [GET_MYSQL_CONNECTION] Creating new database connection")
-        print(f"🔌 [GET_MYSQL_CONNECTION] Config host: {MYSQL_CONFIG.get('host')}")
-        print(f"🔌 [GET_MYSQL_CONNECTION] Config database: {MYSQL_CONFIG.get('database')}")
-        print(f"🔌 [GET_MYSQL_CONNECTION] Config port: {MYSQL_CONFIG.get('port')}")
-        
-        try:
-            connection = mysql.connector.connect(**MYSQL_CONFIG)
-            print("✅ [GET_MYSQL_CONNECTION] Database connection successful")
-            _connection_pool = connection
-            return connection
-        except Error as e:
-            print(f"❌ [GET_MYSQL_CONNECTION] MySQL Error connecting to database: {e}")
-            # In production, log more details but don't expose sensitive info
-            if os.getenv('RAILWAY_ENVIRONMENT') == 'production':
-                print(f"❌ [GET_MYSQL_CONNECTION] Database connection failed - Host: {MYSQL_CONFIG.get('host')}, Database: {MYSQL_CONFIG.get('database')}")
-            return None
-        except Exception as e:
-            print(f"❌ [GET_MYSQL_CONNECTION] Unexpected error connecting to MySQL: {e}")
-            import traceback
-            print(f"❌ [GET_MYSQL_CONNECTION] Connection error traceback: {traceback.format_exc()}")
-            return None
+    try:
+        # Always create fresh connection to avoid timeout issues
+        connection = mysql.connector.connect(**MYSQL_CONFIG)
+        print("✅ [GET_MYSQL_CONNECTION] Database connection successful")
+        return connection
+    except Error as e:
+        print(f"❌ [GET_MYSQL_CONNECTION] MySQL Error connecting to database: {e}")
+        # In production, log more details but don't expose sensitive info
+        if os.getenv('RAILWAY_ENVIRONMENT') == 'production':
+            print(f"❌ [GET_MYSQL_CONNECTION] Database connection failed - Host: {MYSQL_CONFIG.get('host')}, Database: {MYSQL_CONFIG.get('database')}")
+        return None
+    except Exception as e:
+        print(f"❌ [GET_MYSQL_CONNECTION] Unexpected error connecting to MySQL: {e}")
+        import traceback
+        print(f"❌ [GET_MYSQL_CONNECTION] Connection error traceback: {traceback.format_exc()}")
+        return None
 
-def close_mysql_connection():
-    """Close the connection pool"""
+def close_mysql_connection(connection=None):
+    """Close MySQL connection safely"""
+    if connection:
+        try:
+            connection.close()
+            print("🔌 [CLOSE_MYSQL_CONNECTION] Connection closed")
+        except Exception as e:
+            print(f"⚠️ [CLOSE_MYSQL_CONNECTION] Error closing connection: {e}")
+    
+    # Also close pool if it exists
     global _connection_pool
     if _connection_pool:
         try:
             _connection_pool.close()
-            print("🔌 [CLOSE_MYSQL_CONNECTION] Connection closed")
+            print("🔌 [CLOSE_MYSQL_CONNECTION] Pool connection closed")
         except:
             pass
         finally:
@@ -291,11 +288,13 @@ def init_database():
         
         connection.commit()
         cursor.close()
-        connection.close()
+        close_mysql_connection(connection)
         return True
         
     except Error as e:
         print(f"Error initializing database: {e}")
+        if connection:
+            close_mysql_connection(connection)
         return False
 
 # Initialize database when app is created (for gunicorn compatibility)
@@ -305,8 +304,8 @@ import time
 
 def init_db_background():
     """Initialize database in background thread with retry logic"""
-    max_retries = 3
-    retry_delay = 5  # seconds
+    max_retries = 5  # Increased retries
+    retry_delay = 10  # Increased delay between retries
     
     for attempt in range(max_retries):
         try:
@@ -318,6 +317,9 @@ def init_db_background():
                 print(f"⚠️  Database initialization failed (attempt {attempt + 1})")
         except Exception as e:
             print(f"⚠️  Database initialization error (attempt {attempt + 1}): {e}")
+            # Check if it's a connection timeout error
+            if "Lost connection" in str(e) or "timeout" in str(e).lower():
+                print("🔌 Connection timeout detected, will retry with fresh connection")
         
         if attempt < max_retries - 1:
             print(f"⏳ Retrying in {retry_delay} seconds...")
