@@ -1143,7 +1143,7 @@ def process_message():
         print(f"📋 [PROCESS_MESSAGE] Request method: {request.method}")
         print(f"📋 [PROCESS_MESSAGE] Request headers: {dict(request.headers)}")
         
-        # Handle both JSON and multipart form data
+        # Handle JSON, multipart form data, and form-encoded data
         if request.content_type and 'multipart/form-data' in request.content_type:
             print("📋 [PROCESS_MESSAGE] Processing multipart form data")
             # Handle file upload in multipart form
@@ -1158,6 +1158,19 @@ def process_message():
             print(f"📋 [PROCESS_MESSAGE] File URL present: {file_url is not None}")
             if file_upload:
                 print(f"📋 [PROCESS_MESSAGE] File details - name: {file_upload.filename}, content_type: {file_upload.content_type}")
+            if file_url:
+                print(f"📋 [PROCESS_MESSAGE] File URL: {file_url}")
+        elif request.content_type and 'application/x-www-form-urlencoded' in request.content_type:
+            print("📋 [PROCESS_MESSAGE] Processing form-encoded data")
+            # Handle form-encoded data (like from CRM webhooks)
+            message = request.form.get('message')
+            session_id = request.form.get('session_id', 'default_session')
+            thread_id = request.form.get('thread_id')
+            file_upload = None  # No file uploads in form-encoded data
+            file_url = request.form.get('fileUrl')  # URL to file
+            
+            print(f"📋 [PROCESS_MESSAGE] Form data - message: {message}, session_id: {session_id}, thread_id: {thread_id}")
+            print(f"📋 [PROCESS_MESSAGE] File URL present: {file_url is not None}")
             if file_url:
                 print(f"📋 [PROCESS_MESSAGE] File URL: {file_url}")
         else:
