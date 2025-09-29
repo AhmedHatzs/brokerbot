@@ -1162,8 +1162,20 @@ def process_message():
                 print(f"📋 [PROCESS_MESSAGE] File URL: {file_url}")
         elif request.content_type and 'application/x-www-form-urlencoded' in request.content_type:
             print("📋 [PROCESS_MESSAGE] Processing form-encoded data")
+            # Debug: Print all form fields to see what CRM is sending
+            print(f"📋 [PROCESS_MESSAGE] All form fields: {dict(request.form)}")
+            
             # Handle form-encoded data (like from CRM webhooks)
-            message = request.form.get('message')
+            # Try different possible field names for message
+            message = (request.form.get('message') or 
+                      request.form.get('Message') or 
+                      request.form.get('Body') or 
+                      request.form.get('body') or
+                      request.form.get('text') or
+                      request.form.get('Text') or
+                      request.form.get('content') or
+                      request.form.get('Content'))
+            
             session_id = request.form.get('session_id', 'default_session')
             thread_id = request.form.get('thread_id')
             file_upload = None  # No file uploads in form-encoded data
