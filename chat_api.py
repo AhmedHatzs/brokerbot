@@ -68,6 +68,7 @@ import PyPDF2
 from pdf2image import convert_from_bytes
 import requests
 from urllib.parse import urlparse
+import threading
 
 # Load environment variables
 load_dotenv()
