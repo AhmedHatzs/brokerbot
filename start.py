@@ -81,9 +81,10 @@ def start_production():
             "--worker-connections", "1000",
             "--max-requests", "1000",
             "--max-requests-jitter", "50",
-            "--timeout", "60",  # Increased timeout for Railway
+            "--timeout", "300",  # 5 minutes timeout for validator assistant
+            "--graceful-timeout", "30",  # Graceful shutdown timeout
             "--keep-alive", "2",
-            "--log-level", "debug",  # More verbose logging for debugging
+            "--log-level", "info",  # Reduced logging for performance
             "--access-logfile", "-",
             "--error-logfile", "-",
             "--preload"  # Preload app for faster startup

@@ -2039,7 +2039,7 @@ def extract_incident_details_with_gpt(thread_id):
         # Wait for the run to complete
         print("⏳ [EXTRACT_INCIDENT_DETAILS] Waiting for validator assistant to complete")
         import time
-        max_wait_time = 30  # Maximum wait time in seconds
+        max_wait_time = 60  # Increased to 60 seconds for complex conversations
         start_time = time.time()
         
         while True:
