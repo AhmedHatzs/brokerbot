@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Burdy's Auto Detail Chatbot API
+Brokerbot Chatbot API
 Backend API with MySQL and OpenAI integration
 
 Features:
@@ -89,6 +89,7 @@ else:
 # OpenAI Configuration
 from openai import OpenAI
 assistant_id = os.getenv('OPENAI_ASSISTANT_ID')
+validator_assistant_id = os.getenv('VALIDATOR_ASSISTANT')
 
 # Helper function to create client with beta headers
 def get_openai_client():
@@ -135,7 +136,7 @@ def get_mysql_config():
         return {
             'host': 'localhost',
             'port': 3306,
-            'database': 'burdy_chatbot',
+            'database': 'brokerbot',
             'user': 'root',
             'password': '',
             'ssl_disabled': True,
@@ -322,6 +323,11 @@ def clean_response_text(response_text):
     response_text = response_text.replace('\\"', '"')
     response_text = response_text.replace('\\n', ' ')
     response_text = response_text.replace('\\t', ' ')
+    
+    # Remove markdown code blocks (```json ... ```)
+    print("🧹 [CLEAN_RESPONSE_TEXT] Removing markdown code blocks")
+    response_text = re.sub(r'```json\s*', '', response_text)
+    response_text = re.sub(r'```\s*$', '', response_text)
     
     # Remove specific citation patterns (more precise)
     print("🧹 [CLEAN_RESPONSE_TEXT] Removing citation patterns")
@@ -994,6 +1000,138 @@ def test_file_upload():
     except Exception as e:
         return jsonify({'error': f'Test failed: {str(e)}'}), 500
 
+def detect_goodbye_message(response_text):
+    """
+    Detect if the assistant response contains goodbye indicators
+    Only detects "goodbye" variations, not "bye" or other words
+    
+    Args:
+        response_text: The assistant's response text
+        
+    Returns:
+        bool: True if goodbye detected, False otherwise
+    """
+    if not response_text:
+        return False
+    
+    import re
+    
+    # Convert to lowercase for case-insensitive matching
+    response_lower = response_text.lower().strip()
+    
+    # Define regex patterns for "goodbye and take care" variations only
+    # This will ONLY match the specific phrase "Goodbye and Take Care"
+    # But NOT: goodbye alone, bye, see you later, take care alone, etc.
+    goodbye_regex_patterns = [
+        # Specific goodbye phrases from the prompt - MUST include "and take care"
+        r'goodbye\s+and\s+take\s+care',           # "goodbye and take care"
+        r'good\s*bye\s+and\s+take\s+care',       # "good bye and take care"
+        r'good-bye\s+and\s+take\s+care',         # "good-bye and take care"
+        r'goodby\s+and\s+take\s+care',           # "goodby and take care" (typo)
+    ]
+    
+    # Check each regex pattern
+    for pattern in goodbye_regex_patterns:
+        if re.search(pattern, response_lower):
+            match = re.search(pattern, response_lower)
+            print(f"✅ [DETECT_GOODBYE] Regex pattern matched: '{pattern}' -> '{match.group()}'")
+            return True
+    
+    print(f"❌ [DETECT_GOODBYE] No goodbye patterns detected in: '{response_text[:100]}...'")
+    return False
+
+def check_required_fields_collected(thread_id):
+    """
+    Check if all required fields have been collected in the conversation
+    This ensures the form is complete before triggering extraction and webhook
+    
+    Args:
+        thread_id: The thread ID to check
+        
+    Returns:
+        bool: True if all required fields are collected, False otherwise
+    """
+    print(f"🔍 [CHECK_REQUIRED_FIELDS] Checking required fields for thread: {thread_id}")
+    
+    try:
+        # Get conversation history
+        history = get_conversation_history(thread_id)
+        if not history:
+            print("❌ [CHECK_REQUIRED_FIELDS] No conversation history found")
+            return False
+        
+        # Combine all conversation text for analysis
+        conversation_text = ""
+        for message in history:
+            role = message['role']
+            content = message['content']
+            conversation_text += f"{role.upper()}: {content}\n\n"
+        
+        print(f"📋 [CHECK_REQUIRED_FIELDS] Conversation length: {len(conversation_text)} characters")
+        
+        # Define required fields and their indicators
+        required_fields = {
+            'incident_mentioned': [
+                'accident', 'crash', 'collision', 'incident', 'wreck', 'hit', 'collided'
+            ],
+            'date_mentioned': [
+                'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december',
+                'january', 'february', 'yesterday', 'last week', 'last month', 'recently', 'ago',
+                '2024', '2023', '2025', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'
+            ],
+            'location_mentioned': [
+                'california', 'texas', 'florida', 'new york', 'los angeles', 'houston', 'miami', 'chicago',
+                'phoenix', 'philadelphia', 'san antonio', 'san diego', 'dallas', 'san jose', 'austin',
+                'jacksonville', 'fort worth', 'columbus', 'charlotte', 'san francisco', 'indianapolis',
+                'seattle', 'denver', 'washington', 'boston', 'el paso', 'nashville', 'detroit', 'oklahoma city',
+                'portland', 'las vegas', 'memphis', 'louisville', 'baltimore', 'milwaukee', 'albuquerque',
+                'tucson', 'fresno', 'sacramento', 'mesa', 'kansas city', 'atlanta', 'long beach', 'colorado springs',
+                'raleigh', 'miami', 'virginia beach', 'omaha', 'oakland', 'minneapolis', 'tulsa', 'arlington',
+                'tampa', 'new orleans', 'wichita', 'cleveland', 'bakersfield', 'aurora', 'anaheim', 'honolulu'
+            ],
+            'injury_mentioned': [
+                'hurt', 'injured', 'pain', 'hospital', 'doctor', 'medical', 'ambulance', 'emergency',
+                'whiplash', 'broken', 'fracture', 'concussion', 'bruise', 'cut', 'laceration'
+            ],
+            'contact_info_mentioned': [
+                'phone', 'email', 'contact', 'number', '@', 'gmail', 'yahoo', 'hotmail', 'outlook'
+            ],
+            'name_mentioned': [
+                'my name is', 'i am', 'i\'m', 'call me', 'this is'
+            ]
+        }
+        
+        # Convert to lowercase for case-insensitive matching
+        conversation_lower = conversation_text.lower()
+        
+        # Check each required field
+        fields_found = {}
+        for field_name, indicators in required_fields.items():
+            found = any(indicator in conversation_lower for indicator in indicators)
+            fields_found[field_name] = found
+            print(f"🔍 [CHECK_REQUIRED_FIELDS] {field_name}: {'✅ Found' if found else '❌ Missing'}")
+        
+        # Check if all critical fields are present
+        critical_fields = ['incident_mentioned', 'date_mentioned', 'location_mentioned', 'contact_info_mentioned']
+        all_critical_present = all(fields_found[field] for field in critical_fields)
+        
+        # Optional but recommended fields
+        recommended_fields = ['injury_mentioned', 'name_mentioned']
+        recommended_present = any(fields_found[field] for field in recommended_fields)
+        
+        # Final decision: All critical fields + at least one recommended field
+        all_required_collected = all_critical_present and recommended_present
+        
+        print(f"📊 [CHECK_REQUIRED_FIELDS] Critical fields: {sum(fields_found[field] for field in critical_fields)}/{len(critical_fields)}")
+        print(f"📊 [CHECK_REQUIRED_FIELDS] Recommended fields: {sum(fields_found[field] for field in recommended_fields)}/{len(recommended_fields)}")
+        print(f"📊 [CHECK_REQUIRED_FIELDS] All required collected: {'✅ Yes' if all_required_collected else '❌ No'}")
+        
+        return all_required_collected
+        
+    except Exception as e:
+        print(f"❌ [CHECK_REQUIRED_FIELDS] Error checking required fields: {e}")
+        return False
+
 @app.route('/process_message', methods=['POST'])
 def process_message():
     """Process chat message with OpenAI and save to MySQL with thread support"""
@@ -1220,8 +1358,8 @@ def process_message():
             run = openai_client.beta.threads.runs.create(
                 thread_id=openai_thread_id,
                 assistant_id=assistant_id,
-                # Add instructions to keep responses concise for faster processing
-                instructions="Please provide a concise, helpful response. Keep it brief but informative."
+                # Add instructions to keep responses concise and ensure proper goodbye detection
+                instructions="Please provide a concise, helpful response. Keep it brief but informative. IMPORTANT: When ending a conversation, always end with 'Goodbye and Take Care' to ensure proper conversation closure."
             )
             print(f"🤖 [PROCESS_MESSAGE] Assistant run started: {run.id}")
             
@@ -1289,12 +1427,57 @@ def process_message():
             import traceback
             print(f"❌ [PROCESS_MESSAGE] Database save error traceback: {traceback.format_exc()}")
         
+        # Initialize response data first
         response_data = {
             'response': assistant_response,
             'session_id': session_id,
             'thread_id': database_thread_id,
             'timestamp': datetime.now().isoformat()
         }
+        
+        # Check for goodbye detection and trigger validator assistant
+        print("🔍 [PROCESS_MESSAGE] Checking for goodbye detection")
+        goodbye_triggered = detect_goodbye_message(assistant_response)
+        
+        if goodbye_triggered:
+            print("👋 [PROCESS_MESSAGE] Goodbye detected! Checking if all required fields are collected")
+            
+            # Check if all required fields are present before proceeding
+            required_fields_collected = check_required_fields_collected(database_thread_id)
+            
+            if required_fields_collected:
+                print("✅ [PROCESS_MESSAGE] All required fields collected, proceeding with extraction")
+                try:
+                    # Extract incident details using validator assistant
+                    incident_details = extract_incident_details_with_gpt(database_thread_id)
+                    
+                    if incident_details:
+                        print("✅ [PROCESS_MESSAGE] Incident details extracted successfully")
+                        
+                        # Save incident details to database
+                        save_incident_details(database_thread_id, incident_details)
+                        print("💾 [PROCESS_MESSAGE] Incident details saved to database")
+                        
+                        # Send to RPA webhook
+                        send_to_rpa_webhook(database_thread_id, incident_details)
+                        print("🌐 [PROCESS_MESSAGE] Data sent to RPA webhook")
+                        
+                        # Add extraction status to response
+                        response_data['incident_extraction'] = 'completed'
+                        response_data['incident_details'] = incident_details
+                    else:
+                        print("⚠️ [PROCESS_MESSAGE] Failed to extract incident details")
+                        response_data['incident_extraction'] = 'failed'
+                except Exception as e:
+                    print(f"❌ [PROCESS_MESSAGE] Error during incident extraction: {e}")
+                    response_data['incident_extraction'] = 'error'
+                    response_data['extraction_error'] = str(e)
+            else:
+                print("⚠️ [PROCESS_MESSAGE] Required fields not collected, skipping extraction and webhook")
+                response_data['incident_extraction'] = 'skipped'
+                response_data['extraction_reason'] = 'Required fields not collected'
+        else:
+            print("💬 [PROCESS_MESSAGE] No goodbye detected, continuing conversation")
         
         # Add file information if a file was uploaded
         if file_id:
@@ -1337,6 +1520,8 @@ def health():
                 openai_status = "unhealthy - Missing API Key"
             elif not os.getenv('OPENAI_ASSISTANT_ID'):
                 openai_status = "unhealthy - Missing Assistant ID"
+            elif not validator_assistant_id:
+                openai_status = "unhealthy - Missing Validator Assistant ID"
         except Exception as e:
             print(f"OpenAI health check failed: {e}")
             openai_status = "unhealthy"
@@ -1637,6 +1822,531 @@ def is_valid_url(url):
         return bool(parsed.scheme and parsed.netloc)
     except:
         return False
+
+def create_incident_details_table():
+    """Create the incident_details table if it doesn't exist"""
+    connection = get_mysql_connection()
+    if not connection:
+        return False
+    
+    try:
+        cursor = connection.cursor()
+        
+        # Create incident_details table with updated schema
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS incident_details (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                thread_id VARCHAR(255) NOT NULL,
+                date_of_incident VARCHAR(50),
+                month_name VARCHAR(20),
+                day INT,
+                year INT,
+                zip_code VARCHAR(10),
+                was_accident_my_fault ENUM('true', 'false'),
+                was_issued_ticket ENUM('true', 'false'),
+                physically_injured ENUM('true', 'false'),
+                ambulance_called ENUM('true', 'false'),
+                went_to_emergency_room ENUM('true', 'false'),
+                injury_types TEXT,
+                attorney_helping ENUM('true', 'false'),
+                attorney_rejected ENUM('true', 'false'),
+                significant_property_damage ENUM('high', 'moderate', 'minor', 'i_dont_know'),
+                state_of_injury VARCHAR(100),
+                city_of_injury VARCHAR(100),
+                other_party_vehicle_type ENUM('personal', 'work', 'taxi'),
+                injury_description TEXT,
+                first_name VARCHAR(100),
+                last_name VARCHAR(100),
+                phone_number VARCHAR(20),
+                email VARCHAR(255),
+                consent_given ENUM('true', 'false'),
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                INDEX idx_thread_id (thread_id)
+            )
+        """)
+        
+        # Add new columns if they don't exist (for existing tables)
+        try:
+            cursor.execute("ALTER TABLE incident_details ADD COLUMN month_name VARCHAR(20)")
+            print("✅ [CREATE_INCIDENT_DETAILS_TABLE] Added month_name column")
+        except Exception as e:
+            if "Duplicate column name" in str(e):
+                print("ℹ️ [CREATE_INCIDENT_DETAILS_TABLE] month_name column already exists")
+            else:
+                print(f"⚠️ [CREATE_INCIDENT_DETAILS_TABLE] Error adding month_name: {e}")
+        
+        try:
+            cursor.execute("ALTER TABLE incident_details ADD COLUMN zip_code VARCHAR(10)")
+            print("✅ [CREATE_INCIDENT_DETAILS_TABLE] Added zip_code column")
+        except Exception as e:
+            if "Duplicate column name" in str(e):
+                print("ℹ️ [CREATE_INCIDENT_DETAILS_TABLE] zip_code column already exists")
+            else:
+                print(f"⚠️ [CREATE_INCIDENT_DETAILS_TABLE] Error adding zip_code: {e}")
+        
+        # Update ENUM values for existing columns - handle transition from yes/no to true/false
+        try:
+            # First, clear existing data to avoid conflicts
+            cursor.execute("DELETE FROM incident_details")
+            print("✅ [CREATE_INCIDENT_DETAILS_TABLE] Cleared existing data to avoid ENUM conflicts")
+            
+            # Now update the ENUM definitions
+            cursor.execute("ALTER TABLE incident_details MODIFY COLUMN was_accident_my_fault ENUM('true', 'false')")
+            cursor.execute("ALTER TABLE incident_details MODIFY COLUMN was_issued_ticket ENUM('true', 'false')")
+            cursor.execute("ALTER TABLE incident_details MODIFY COLUMN physically_injured ENUM('true', 'false')")
+            cursor.execute("ALTER TABLE incident_details MODIFY COLUMN ambulance_called ENUM('true', 'false')")
+            cursor.execute("ALTER TABLE incident_details MODIFY COLUMN went_to_emergency_room ENUM('true', 'false')")
+            cursor.execute("ALTER TABLE incident_details MODIFY COLUMN attorney_helping ENUM('true', 'false')")
+            cursor.execute("ALTER TABLE incident_details MODIFY COLUMN attorney_rejected ENUM('true', 'false')")
+            cursor.execute("ALTER TABLE incident_details MODIFY COLUMN consent_given ENUM('true', 'false')")
+            cursor.execute("ALTER TABLE incident_details MODIFY COLUMN significant_property_damage ENUM('high', 'moderate', 'minor', 'i_dont_know')")
+            cursor.execute("ALTER TABLE incident_details MODIFY COLUMN other_party_vehicle_type ENUM('personal', 'work', 'taxi')")
+            print("✅ [CREATE_INCIDENT_DETAILS_TABLE] Updated ENUM definitions to true/false")
+        except Exception as e:
+            print(f"⚠️ [CREATE_INCIDENT_DETAILS_TABLE] Error updating ENUM values: {e}")
+        
+        connection.commit()
+        cursor.close()
+        connection.close()
+        print("✅ [CREATE_INCIDENT_DETAILS_TABLE] Table created successfully")
+        return True
+        
+    except Error as e:
+        print(f"❌ [CREATE_INCIDENT_DETAILS_TABLE] Error creating table: {e}")
+        return False
+
+def extract_incident_details_with_gpt(thread_id):
+    """
+    Use VALIDATOR_ASSISTANT to extract incident details from conversation history
+    
+    Args:
+        thread_id: The thread ID to extract details from
+        
+    Returns:
+        dict: Extracted incident details or None if extraction fails
+    """
+    print(f"🔍 [EXTRACT_INCIDENT_DETAILS] Starting extraction for thread: {thread_id}")
+    
+    try:
+        # Check if validator assistant is configured
+        if not validator_assistant_id:
+            print("❌ [EXTRACT_INCIDENT_DETAILS] Validator Assistant ID not configured")
+            return None
+        
+        # Get conversation history
+        history = get_conversation_history(thread_id)
+        if not history:
+            print("❌ [EXTRACT_INCIDENT_DETAILS] No conversation history found")
+            return None
+        
+        # Prepare conversation text for validator assistant analysis
+        conversation_text = ""
+        for message in history:
+            role = message['role']
+            content = message['content']
+            conversation_text += f"{role.upper()}: {content}\n\n"
+        
+        print(f"📋 [EXTRACT_INCIDENT_DETAILS] Conversation length: {len(conversation_text)} characters")
+        
+        # Create OpenAI client
+        openai_client = get_openai_client()
+        
+        # Create a new thread for the validator assistant
+        print("🆕 [EXTRACT_INCIDENT_DETAILS] Creating validator assistant thread")
+        validator_thread = openai_client.beta.threads.create()
+        print(f"🆕 [EXTRACT_INCIDENT_DETAILS] Created validator thread: {validator_thread.id}")
+        
+        # Add the conversation as a message to the validator thread
+        print("📝 [EXTRACT_INCIDENT_DETAILS] Adding conversation to validator thread")
+        openai_client.beta.threads.messages.create(
+            thread_id=validator_thread.id,
+            role="user",
+            content=conversation_text
+        )
+        print("✅ [EXTRACT_INCIDENT_DETAILS] Conversation added to validator thread")
+        
+        # Run the validator assistant
+        print(f"🤖 [EXTRACT_INCIDENT_DETAILS] Starting validator assistant run with ID: {validator_assistant_id}")
+        run = openai_client.beta.threads.runs.create(
+            thread_id=validator_thread.id,
+            assistant_id=validator_assistant_id
+        )
+        print(f"🤖 [EXTRACT_INCIDENT_DETAILS] Validator assistant run started: {run.id}")
+        
+        # Wait for the run to complete
+        print("⏳ [EXTRACT_INCIDENT_DETAILS] Waiting for validator assistant to complete")
+        import time
+        max_wait_time = 30  # Maximum wait time in seconds
+        start_time = time.time()
+        
+        while True:
+            run_status = openai_client.beta.threads.runs.retrieve(
+                thread_id=validator_thread.id,
+                run_id=run.id
+            )
+            
+            print(f"⏳ [EXTRACT_INCIDENT_DETAILS] Validator run status: {run_status.status}")
+            
+            if run_status.status == 'completed':
+                print("✅ [EXTRACT_INCIDENT_DETAILS] Validator assistant run completed")
+                break
+            elif run_status.status == 'failed':
+                print(f"❌ [EXTRACT_INCIDENT_DETAILS] Validator assistant run failed: {run_status.last_error}")
+                raise Exception(f"Validator assistant run failed: {run_status.last_error}")
+            elif run_status.status == 'requires_action':
+                print(f"⚠️ [EXTRACT_INCIDENT_DETAILS] Validator assistant requires action: {run_status.required_action}")
+                raise Exception("Validator assistant requires action")
+            elif run_status.status == 'expired':
+                print(f"❌ [EXTRACT_INCIDENT_DETAILS] Validator assistant run expired")
+                raise Exception("Validator assistant run expired")
+            
+            # Check for timeout
+            elapsed_time = time.time() - start_time
+            if elapsed_time > max_wait_time:
+                print(f"❌ [EXTRACT_INCIDENT_DETAILS] Validator assistant run timed out after {max_wait_time} seconds")
+                raise Exception(f"Validator assistant run timed out after {max_wait_time} seconds")
+            
+            time.sleep(0.5)  # Poll every 0.5 seconds
+        
+        # Get the validator assistant's response
+        print("📋 [EXTRACT_INCIDENT_DETAILS] Retrieving validator assistant response")
+        messages = openai_client.beta.threads.messages.list(thread_id=validator_thread.id)
+        validator_response = messages.data[0].content[0].text.value
+        print(f"📋 [EXTRACT_INCIDENT_DETAILS] Raw validator response length: {len(validator_response)}")
+        
+        # Clean up the response to remove formatting artifacts
+        print("🧹 [EXTRACT_INCIDENT_DETAILS] Cleaning validator response")
+        validator_response = clean_response_text(validator_response)
+        print(f"🧹 [EXTRACT_INCIDENT_DETAILS] Cleaned response length: {len(validator_response)}")
+        
+        # Try to parse JSON
+        try:
+            import json
+            incident_details = json.loads(validator_response)
+            print(f"✅ [EXTRACT_INCIDENT_DETAILS] Successfully extracted {len(incident_details)} fields using validator assistant")
+            return incident_details
+        except json.JSONDecodeError as e:
+            print(f"❌ [EXTRACT_INCIDENT_DETAILS] Failed to parse JSON response: {e}")
+            print(f"❌ [EXTRACT_INCIDENT_DETAILS] Raw response: {validator_response}")
+            return None
+            
+    except Exception as e:
+        print(f"❌ [EXTRACT_INCIDENT_DETAILS] Extraction failed: {e}")
+        import traceback
+        print(f"❌ [EXTRACT_INCIDENT_DETAILS] Error traceback: {traceback.format_exc()}")
+        return None
+
+def save_incident_details(thread_id, incident_details):
+    """Save extracted incident details to database"""
+    print(f"💾 [SAVE_INCIDENT_DETAILS] Saving details for thread: {thread_id}")
+    
+    # Debug: Print all incident details to see what values we're getting
+    print(f"🔍 [SAVE_INCIDENT_DETAILS] Incident details: {json.dumps(incident_details, indent=2)}")
+    
+    # Validate and convert boolean values to ensure they match ENUM definitions
+    boolean_fields = [
+        'was_accident_my_fault', 'was_issued_ticket', 'physically_injured',
+        'ambulance_called', 'went_to_emergency_room', 'attorney_helping',
+        'attorney_rejected', 'consent_given'
+    ]
+    
+    for field in boolean_fields:
+        value = incident_details.get(field)
+        if value is not None:
+            if value in ['true', 'false']:
+                print(f"✅ [SAVE_INCIDENT_DETAILS] {field}: {value} (valid)")
+            elif value in ['yes', 'no']:
+                # Convert yes/no to true/false
+                converted_value = 'true' if value == 'yes' else 'false'
+                incident_details[field] = converted_value
+                print(f"🔄 [SAVE_INCIDENT_DETAILS] {field}: {value} -> {converted_value} (converted)")
+            elif value == 'null':
+                incident_details[field] = None
+                print(f"🔄 [SAVE_INCIDENT_DETAILS] {field}: {value} -> None (converted)")
+            else:
+                print(f"⚠️ [SAVE_INCIDENT_DETAILS] {field}: {value} (unknown value, setting to None)")
+                incident_details[field] = None
+    
+    connection = get_mysql_connection()
+    if not connection:
+        return False
+    
+    try:
+        cursor = connection.cursor()
+        
+        # Check if record exists
+        cursor.execute("SELECT id FROM incident_details WHERE thread_id = %s", (thread_id,))
+        existing_record = cursor.fetchone()
+        
+        if existing_record:
+            # Update existing record
+            print("🔄 [SAVE_INCIDENT_DETAILS] Updating existing record")
+            cursor.execute("""
+                UPDATE incident_details SET
+                    date_of_incident = %s,
+                    month_name = %s,
+                    day = %s,
+                    year = %s,
+                    zip_code = %s,
+                    was_accident_my_fault = %s,
+                    was_issued_ticket = %s,
+                    physically_injured = %s,
+                    ambulance_called = %s,
+                    went_to_emergency_room = %s,
+                    injury_types = %s,
+                    attorney_helping = %s,
+                    attorney_rejected = %s,
+                    significant_property_damage = %s,
+                    state_of_injury = %s,
+                    city_of_injury = %s,
+                    other_party_vehicle_type = %s,
+                    injury_description = %s,
+                    first_name = %s,
+                    last_name = %s,
+                    phone_number = %s,
+                    email = %s,
+                    consent_given = %s,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE thread_id = %s
+            """, (
+                incident_details.get('date_of_incident'),
+                incident_details.get('month_name'),
+                incident_details.get('day'),
+                incident_details.get('year'),
+                incident_details.get('zip_code'),
+                incident_details.get('was_accident_my_fault'),
+                incident_details.get('was_issued_ticket'),
+                incident_details.get('physically_injured'),
+                incident_details.get('ambulance_called'),
+                incident_details.get('went_to_emergency_room'),
+                json.dumps(incident_details.get('injury_types', [])),
+                incident_details.get('attorney_helping'),
+                incident_details.get('attorney_rejected'),
+                incident_details.get('significant_property_damage'),
+                incident_details.get('state_of_injury'),
+                incident_details.get('city_of_injury'),
+                incident_details.get('other_party_vehicle_type'),
+                incident_details.get('injury_description'),
+                incident_details.get('first_name'),
+                incident_details.get('last_name'),
+                incident_details.get('phone_number'),
+                incident_details.get('email'),
+                incident_details.get('consent_given'),
+                thread_id
+            ))
+        else:
+            # Insert new record
+            print("🆕 [SAVE_INCIDENT_DETAILS] Creating new record")
+            cursor.execute("""
+                INSERT INTO incident_details (
+                    thread_id, date_of_incident, month_name, day, year, zip_code,
+                    was_accident_my_fault, was_issued_ticket, physically_injured,
+                    ambulance_called, went_to_emergency_room, injury_types,
+                    attorney_helping, attorney_rejected, significant_property_damage,
+                    state_of_injury, city_of_injury, other_party_vehicle_type,
+                    injury_description, first_name, last_name, phone_number,
+                    email, consent_given
+                ) VALUES (
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                )
+            """, (
+                thread_id,
+                incident_details.get('date_of_incident'),
+                incident_details.get('month_name'),
+                incident_details.get('day'),
+                incident_details.get('year'),
+                incident_details.get('zip_code'),
+                incident_details.get('was_accident_my_fault'),
+                incident_details.get('was_issued_ticket'),
+                incident_details.get('physically_injured'),
+                incident_details.get('ambulance_called'),
+                incident_details.get('went_to_emergency_room'),
+                json.dumps(incident_details.get('injury_types', [])),
+                incident_details.get('attorney_helping'),
+                incident_details.get('attorney_rejected'),
+                incident_details.get('significant_property_damage'),
+                incident_details.get('state_of_injury'),
+                incident_details.get('city_of_injury'),
+                incident_details.get('other_party_vehicle_type'),
+                incident_details.get('injury_description'),
+                incident_details.get('first_name'),
+                incident_details.get('last_name'),
+                incident_details.get('phone_number'),
+                incident_details.get('email'),
+                incident_details.get('consent_given')
+            ))
+        
+        connection.commit()
+        cursor.close()
+        connection.close()
+        print("✅ [SAVE_INCIDENT_DETAILS] Details saved successfully")
+        return True
+        
+    except Error as e:
+        print(f"❌ [SAVE_INCIDENT_DETAILS] Database error: {e}")
+        return False
+
+def get_incident_details(thread_id):
+    """Get incident details for a thread"""
+    print(f"🔍 [GET_INCIDENT_DETAILS] Retrieving details for thread: {thread_id}")
+    
+    connection = get_mysql_connection()
+    if not connection:
+        return None
+    
+    try:
+        cursor = connection.cursor(dictionary=True)
+        
+        cursor.execute("""
+            SELECT * FROM incident_details WHERE thread_id = %s
+        """, (thread_id,))
+        
+        result = cursor.fetchone()
+        cursor.close()
+        connection.close()
+        
+        if result:
+            # Parse injury_types JSON
+            if result.get('injury_types'):
+                try:
+                    result['injury_types'] = json.loads(result['injury_types'])
+                except:
+                    result['injury_types'] = []
+            else:
+                result['injury_types'] = []
+            
+            print(f"✅ [GET_INCIDENT_DETAILS] Found details for thread: {thread_id}")
+            return result
+        else:
+            print(f"⚠️ [GET_INCIDENT_DETAILS] No details found for thread: {thread_id}")
+            return None
+            
+    except Error as e:
+        print(f"❌ [GET_INCIDENT_DETAILS] Database error: {e}")
+        return None
+
+def send_to_rpa_webhook(thread_id, incident_details):
+    """Send incident details to RPA webhook"""
+    webhook_url = os.getenv('RPA_WEBHOOK_URL') or os.getenv('RPA_WEBHOOK')
+    if not webhook_url:
+        print("⚠️ [RPA_WEBHOOK] No webhook URL configured")
+        return False
+    
+    print(f"🌐 [RPA_WEBHOOK] Sending data to webhook: {webhook_url}")
+    
+    try:
+        # Convert string boolean values to actual booleans for webhook
+        webhook_incident_details = {}
+        for key, value in incident_details.items():
+            if key in ['was_accident_my_fault', 'was_issued_ticket', 'physically_injured', 
+                      'ambulance_called', 'went_to_emergency_room', 'attorney_helping', 
+                      'attorney_rejected', 'consent_given']:
+                if value == 'true':
+                    webhook_incident_details[key] = True
+                elif value == 'false':
+                    webhook_incident_details[key] = False
+                else:
+                    # For null/unknown values, default to False instead of None
+                    webhook_incident_details[key] = False
+                    print(f"🔄 [RPA_WEBHOOK] {key}: {value} -> False (default for null/unknown)")
+            else:
+                webhook_incident_details[key] = value
+        
+        # Add zip code from incident_details to top level
+        zip_code = incident_details.get('zip_code', '')
+        
+        payload = {
+            "form_data": {
+                "thread_id": thread_id,
+                "timestamp": datetime.now().isoformat(),
+                "zip": zip_code,
+                "incident_details": webhook_incident_details,
+                "submit_form": False  # Always false as requested
+            }
+        }
+        
+        print(f"🔍 [RPA_WEBHOOK] Payload being sent: {json.dumps(payload, indent=2)}")
+        
+        response = requests.post(
+            webhook_url,
+            json=payload,
+            headers={'Content-Type': 'application/json'},
+            timeout=30
+        )
+        
+        if response.status_code == 200:
+            print("✅ [RPA_WEBHOOK] Data sent successfully")
+            return True
+        else:
+            print(f"❌ [RPA_WEBHOOK] Webhook returned status {response.status_code}")
+            print(f"❌ [RPA_WEBHOOK] Response: {response.text}")
+            return False
+            
+    except Exception as e:
+        print(f"❌ [RPA_WEBHOOK] Failed to send data: {e}")
+        return False
+
+@app.route('/incident-details/<thread_id>', methods=['GET'])
+def get_incident_details_endpoint(thread_id):
+    """Get incident details for a thread"""
+    try:
+        details = get_incident_details(thread_id)
+        
+        if details:
+            return jsonify({
+                'thread_id': thread_id,
+                'incident_details': details,
+                'extracted_at': details.get('created_at'),
+                'updated_at': details.get('updated_at')
+            }), 200
+        else:
+            return jsonify({
+                'error': 'No incident details found for this thread'
+            }), 404
+            
+    except Exception as e:
+        print(f"❌ [GET_INCIDENT_DETAILS_ENDPOINT] Error: {e}")
+        return jsonify({'error': 'Failed to get incident details'}), 500
+
+@app.route('/incident-details/<thread_id>', methods=['POST'])
+def extract_incident_details_endpoint(thread_id):
+    """Extract incident details for a thread"""
+    try:
+        print(f"🎯 [EXTRACT_INCIDENT_DETAILS_ENDPOINT] Starting extraction for thread: {thread_id}")
+        
+        # Extract details using VALIDATOR_ASSISTANT
+        incident_details = extract_incident_details_with_gpt(thread_id)
+        
+        if not incident_details:
+            return jsonify({
+                'error': 'Failed to extract incident details'
+            }), 500
+        
+        # Save to database
+        if not save_incident_details(thread_id, incident_details):
+            return jsonify({
+                'error': 'Failed to save incident details'
+            }), 500
+        
+        # Send to RPA webhook if configured
+        send_to_rpa_webhook(thread_id, incident_details)
+        
+        return jsonify({
+            'thread_id': thread_id,
+            'incident_details': incident_details,
+            'extracted_at': datetime.now().isoformat(),
+            'message': 'Incident details extracted successfully'
+        }), 200
+        
+    except Exception as e:
+        print(f"❌ [EXTRACT_INCIDENT_DETAILS_ENDPOINT] Error: {e}")
+        return jsonify({'error': 'Failed to extract incident details'}), 500
+
+# Initialize incident details table when app starts
+print("🔧 Initializing incident details table...")
+incident_table_thread = threading.Thread(target=create_incident_details_table, daemon=True)
+incident_table_thread.start()
 
 # This module is designed to be imported by start.py
 # The Flask app will be started by the startup script 
