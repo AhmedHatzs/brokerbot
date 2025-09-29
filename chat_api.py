@@ -146,28 +146,58 @@ def get_mysql_config():
 
 MYSQL_CONFIG = get_mysql_config()
 
+# Connection pool for better performance
+_connection_pool = None
+_pool_lock = threading.Lock()
+
 def get_mysql_connection():
-    """Create and return MySQL connection with production-ready error handling"""
-    print(f"🔌 [GET_MYSQL_CONNECTION] Attempting database connection")
-    print(f"🔌 [GET_MYSQL_CONNECTION] Config host: {MYSQL_CONFIG.get('host')}")
-    print(f"🔌 [GET_MYSQL_CONNECTION] Config database: {MYSQL_CONFIG.get('database')}")
-    print(f"🔌 [GET_MYSQL_CONNECTION] Config port: {MYSQL_CONFIG.get('port')}")
+    """Get MySQL connection from pool or create new one"""
+    global _connection_pool
     
-    try:
-        connection = mysql.connector.connect(**MYSQL_CONFIG)
-        print("✅ [GET_MYSQL_CONNECTION] Database connection successful")
-        return connection
-    except Error as e:
-        print(f"❌ [GET_MYSQL_CONNECTION] MySQL Error connecting to database: {e}")
-        # In production, log more details but don't expose sensitive info
-        if os.getenv('RAILWAY_ENVIRONMENT') == 'production':
-            print(f"❌ [GET_MYSQL_CONNECTION] Database connection failed - Host: {MYSQL_CONFIG.get('host')}, Database: {MYSQL_CONFIG.get('database')}")
-        return None
-    except Exception as e:
-        print(f"❌ [GET_MYSQL_CONNECTION] Unexpected error connecting to MySQL: {e}")
-        import traceback
-        print(f"❌ [GET_MYSQL_CONNECTION] Connection error traceback: {traceback.format_exc()}")
-        return None
+    # Try to get existing connection first
+    if _connection_pool and _connection_pool.is_connected():
+        print("🔄 [GET_MYSQL_CONNECTION] Reusing existing connection")
+        return _connection_pool
+    
+    with _pool_lock:
+        # Double-check after acquiring lock
+        if _connection_pool and _connection_pool.is_connected():
+            print("🔄 [GET_MYSQL_CONNECTION] Reusing existing connection (after lock)")
+            return _connection_pool
+            
+        print(f"🔌 [GET_MYSQL_CONNECTION] Creating new database connection")
+        print(f"🔌 [GET_MYSQL_CONNECTION] Config host: {MYSQL_CONFIG.get('host')}")
+        print(f"🔌 [GET_MYSQL_CONNECTION] Config database: {MYSQL_CONFIG.get('database')}")
+        print(f"🔌 [GET_MYSQL_CONNECTION] Config port: {MYSQL_CONFIG.get('port')}")
+        
+        try:
+            connection = mysql.connector.connect(**MYSQL_CONFIG)
+            print("✅ [GET_MYSQL_CONNECTION] Database connection successful")
+            _connection_pool = connection
+            return connection
+        except Error as e:
+            print(f"❌ [GET_MYSQL_CONNECTION] MySQL Error connecting to database: {e}")
+            # In production, log more details but don't expose sensitive info
+            if os.getenv('RAILWAY_ENVIRONMENT') == 'production':
+                print(f"❌ [GET_MYSQL_CONNECTION] Database connection failed - Host: {MYSQL_CONFIG.get('host')}, Database: {MYSQL_CONFIG.get('database')}")
+            return None
+        except Exception as e:
+            print(f"❌ [GET_MYSQL_CONNECTION] Unexpected error connecting to MySQL: {e}")
+            import traceback
+            print(f"❌ [GET_MYSQL_CONNECTION] Connection error traceback: {traceback.format_exc()}")
+            return None
+
+def close_mysql_connection():
+    """Close the connection pool"""
+    global _connection_pool
+    if _connection_pool:
+        try:
+            _connection_pool.close()
+            print("🔌 [CLOSE_MYSQL_CONNECTION] Connection closed")
+        except:
+            pass
+        finally:
+            _connection_pool = None
 
 def init_database():
     """Initialize database tables if they don't exist"""
@@ -1138,10 +1168,12 @@ def process_message():
     print(f"🚀 [PROCESS_MESSAGE] Starting request processing at {datetime.now()}")
     
     try:
-        # Log request details
+        # Log request details (reduced verbosity for performance)
         print(f"📋 [PROCESS_MESSAGE] Request content type: {request.content_type}")
         print(f"📋 [PROCESS_MESSAGE] Request method: {request.method}")
-        print(f"📋 [PROCESS_MESSAGE] Request headers: {dict(request.headers)}")
+        # Only log headers in debug mode to reduce processing time
+        if os.getenv('DEBUG_HEADERS') == 'true':
+            print(f"📋 [PROCESS_MESSAGE] Request headers: {dict(request.headers)}")
         
         # Handle JSON, multipart form data, and form-encoded data
         if request.content_type and 'multipart/form-data' in request.content_type:
@@ -1391,8 +1423,9 @@ def process_message():
             # Wait for the run to complete with optimized polling
             print("⏳ [PROCESS_MESSAGE] Waiting for assistant run to complete")
             import time
-            max_wait_time = 30  # Maximum wait time in seconds
+            max_wait_time = 20  # Reduced from 30 to 20 seconds
             start_time = time.time()
+            poll_count = 0
             
             while True:
                 run_status = openai_client.beta.threads.runs.retrieve(
@@ -1400,7 +1433,10 @@ def process_message():
                     run_id=run.id
                 )
                 
-                print(f"⏳ [PROCESS_MESSAGE] Run status: {run_status.status}")
+                poll_count += 1
+                # Only log every 3rd poll to reduce log noise
+                if poll_count % 3 == 0:
+                    print(f"⏳ [PROCESS_MESSAGE] Run status: {run_status.status}")
                 
                 if run_status.status == 'completed':
                     print("✅ [PROCESS_MESSAGE] Assistant run completed")
@@ -1421,7 +1457,8 @@ def process_message():
                     print(f"❌ [PROCESS_MESSAGE] Assistant run timed out after {max_wait_time} seconds")
                     raise Exception(f"Assistant run timed out after {max_wait_time} seconds")
                 
-                time.sleep(0.5)  # Reduced polling interval for faster response detection
+                # Faster polling for quicker responses
+                time.sleep(0.3)  # Reduced from 0.5 to 0.3 seconds
             
             # Get the assistant's response
             print("📋 [PROCESS_MESSAGE] Retrieving assistant response")
